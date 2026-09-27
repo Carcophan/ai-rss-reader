@@ -21,6 +21,14 @@ data class ArticleSummaryState(
     val error: String? = null
 )
 
+data class DailyBriefingState(
+    val isLoading: Boolean = false,
+    val statusMessage: String? = null,
+    val briefing: String? = null,
+    val error: String? = null,
+    val generatedDate: String? = null
+)
+
 data class RssUiState(
     val feeds: List<Feed> = emptyList(),
     val selectedFeed: Feed? = null,
@@ -29,7 +37,8 @@ data class RssUiState(
     val isAddingFeed: Boolean = false,
     val errorMessage: String? = null,
     val searchQuery: String = "",
-    val summaryStates: Map<String, ArticleSummaryState> = emptyMap()
+    val summaryStates: Map<String, ArticleSummaryState> = emptyMap(),
+    val dailyBriefingState: DailyBriefingState = DailyBriefingState()
 )
 
 class RssViewModel(application: Application) : AndroidViewModel(application) {
@@ -252,6 +261,100 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
             val updatedMap = current.summaryStates.toMutableMap()
             updatedMap[articleId] = state
             current.copy(summaryStates = updatedMap)
+        }
+    }
+
+    fun loadOrGenerateDailyBriefing(forceRefresh: Boolean = false) {
+        val feedName = _uiState.value.selectedFeed?.title ?: "Alle Feeds"
+        val feedId = _uiState.value.selectedFeed?.id ?: "all"
+        val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val cacheKey = "${feedId}_$todayStr"
+
+        if (!geminiRepository.hasApiKey()) {
+            _uiState.update {
+                it.copy(
+                    dailyBriefingState = DailyBriefingState(error = "MISSING_API_KEY")
+                )
+            }
+            return
+        }
+
+        if (!forceRefresh) {
+            val current = _uiState.value.dailyBriefingState
+            if (!current.briefing.isNullOrBlank() && current.generatedDate == todayStr) {
+                return
+            }
+            val cached = geminiRepository.getCachedBriefing(cacheKey)
+            if (!cached.isNullOrBlank()) {
+                _uiState.update {
+                    it.copy(
+                        dailyBriefingState = DailyBriefingState(
+                            briefing = cached,
+                            generatedDate = todayStr
+                        )
+                    )
+                }
+                return
+            }
+        }
+
+        val articlesToBrief = _uiState.value.articles
+        if (articlesToBrief.isEmpty()) {
+            _uiState.update {
+                it.copy(
+                    dailyBriefingState = DailyBriefingState(
+                        error = "Keine Artikel zum Erstellen eines Briefings verfügbar."
+                    )
+                )
+            }
+            return
+        }
+
+        val modelName = geminiRepository.getModel()
+        val count = articlesToBrief.take(20).size
+        _uiState.update {
+            it.copy(
+                dailyBriefingState = DailyBriefingState(
+                    isLoading = true,
+                    statusMessage = "Gemini ($modelName) analysiert die $count wichtigsten Meldungen..."
+                )
+            )
+        }
+
+        viewModelScope.launch {
+            try {
+                val result = geminiRepository.generateDailyBriefing(feedName, articlesToBrief)
+                result.onSuccess { briefingText ->
+                    geminiRepository.saveCachedBriefing(cacheKey, briefingText)
+                    _uiState.update {
+                        it.copy(
+                            dailyBriefingState = DailyBriefingState(
+                                isLoading = false,
+                                briefing = briefingText,
+                                generatedDate = todayStr
+                            )
+                        )
+                    }
+                }.onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            dailyBriefingState = DailyBriefingState(
+                                isLoading = false,
+                                error = error.localizedMessage ?: "Fehler beim Erstellen des Daily Briefings."
+                            )
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        dailyBriefingState = DailyBriefingState(
+                            isLoading = false,
+                            error = e.localizedMessage ?: "Unerwarteter Fehler beim Erstellen des Briefings."
+                        )
+                    )
+                }
+            }
         }
     }
 }

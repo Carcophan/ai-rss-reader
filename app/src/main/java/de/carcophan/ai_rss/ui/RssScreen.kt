@@ -57,10 +57,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.material.icons.filled.WbSunny
 import de.carcophan.ai_rss.data.model.RssItem
 import de.carcophan.ai_rss.ui.components.AddFeedDialog
 import de.carcophan.ai_rss.ui.components.ArticleCard
 import de.carcophan.ai_rss.ui.components.ArticleDetailSheet
+import de.carcophan.ai_rss.ui.components.DailyBriefingCard
+import de.carcophan.ai_rss.ui.components.DailyBriefingSheet
 import de.carcophan.ai_rss.ui.components.FeedDrawer
 import de.carcophan.ai_rss.ui.components.GeminiSettingsDialog
 import kotlinx.coroutines.launch
@@ -77,6 +80,7 @@ fun RssScreen(
 
     var showAddDialog by remember { mutableStateOf(false) }
     var showGeminiSettings by remember { mutableStateOf(false) }
+    var showDailyBriefing by remember { mutableStateOf(false) }
     var selectedArticle by remember { mutableStateOf<RssItem?>(null) }
     var isSearchActive by remember { mutableStateOf(false) }
 
@@ -163,6 +167,20 @@ fun RssScreen(
                                 enabled = !uiState.isLoading
                             ) {
                                 Icon(Icons.Default.Refresh, contentDescription = "Aktualisieren")
+                            }
+
+                            IconButton(
+                                onClick = {
+                                    showDailyBriefing = true
+                                    viewModel.loadOrGenerateDailyBriefing(forceRefresh = false)
+                                },
+                                enabled = !uiState.isLoading && uiState.articles.isNotEmpty()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.WbSunny,
+                                    contentDescription = "Daily Briefing",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
                             }
 
                             IconButton(onClick = { showGeminiSettings = true }) {
@@ -275,6 +293,18 @@ fun RssScreen(
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        if (uiState.searchQuery.isBlank() && filteredArticles.isNotEmpty()) {
+                            item(key = "daily_briefing_card") {
+                                DailyBriefingCard(
+                                    feedTitle = uiState.selectedFeed?.title ?: "Alle Feeds",
+                                    onClick = {
+                                        showDailyBriefing = true
+                                        viewModel.loadOrGenerateDailyBriefing(forceRefresh = false)
+                                    }
+                                )
+                            }
+                        }
+
                         items(filteredArticles, key = { it.id }) { article ->
                             ArticleCard(
                                 article = article,
@@ -325,6 +355,20 @@ fun RssScreen(
             },
             onOpenGeminiSettings = { showGeminiSettings = true },
             onDismiss = { selectedArticle = null }
+        )
+    }
+
+    // Daily Briefing Sheet
+    if (showDailyBriefing) {
+        DailyBriefingSheet(
+            feedTitle = uiState.selectedFeed?.title ?: "Alle Feeds",
+            briefingState = uiState.dailyBriefingState,
+            geminiModelName = viewModel.geminiRepository.getModel(),
+            onRefresh = {
+                viewModel.loadOrGenerateDailyBriefing(forceRefresh = true)
+            },
+            onOpenGeminiSettings = { showGeminiSettings = true },
+            onDismiss = { showDailyBriefing = false }
         )
     }
 }

@@ -1,6 +1,7 @@
 package de.carcophan.ai_rss.data.repository
 
 import android.content.Context
+import de.carcophan.ai_rss.data.model.RssItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -57,6 +58,14 @@ class GeminiRepository(private val context: Context) {
 
     fun saveCachedSummary(articleId: String, summary: String) {
         cachePrefs.edit().putString(articleId, summary).apply()
+    }
+
+    fun getCachedBriefing(key: String): String? {
+        return cachePrefs.getString("briefing_$key", null)
+    }
+
+    fun saveCachedBriefing(key: String, briefing: String) {
+        cachePrefs.edit().putString("briefing_$key", briefing).apply()
     }
 
     fun clearCache() {
@@ -131,6 +140,67 @@ class GeminiRepository(private val context: Context) {
         try {
             val summary = executeGeminiRequest(apiKey, model, systemPrompt, userPrompt)
             Result.success(summary)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Generate a structured Daily Briefing from a list of recent articles using Gemini.
+     */
+    suspend fun generateDailyBriefing(
+        feedTitle: String,
+        articles: List<RssItem>
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val apiKey = getApiKey()
+        if (apiKey.isBlank()) {
+            return@withContext Result.failure(IllegalStateException("Kein Gemini API-Key hinterlegt. Bitte trage deinen API-Key in den Einstellungen ein."))
+        }
+
+        if (articles.isEmpty()) {
+            return@withContext Result.failure(IllegalArgumentException("Keine Artikel vorhanden, um ein Briefing zu erstellen."))
+        }
+
+        val model = getModel()
+        val topArticles = articles.take(20)
+
+        val systemPrompt = """
+            Du bist ein professioneller Nachrichten-Redakteur und Moderator. Deine Aufgabe ist es, aus den wichtigsten aktuellen Meldungen ein flüssiges, hochinformatives und klar strukturiertes "Daily Briefing" (Tagesüberblick) auf Deutsch zu verfassen.
+
+            Formatierungsrichtlinien (nutze sauberes Markdown):
+            - Starte mit einer freundlichen, motivierenden Begrüßung ("☀️ Guten Tag" o. Ä.) und einem prägnanten 1- bis 2-Satz-Überblick über das heutige Tagesgeschehen.
+            - Strukturiere das Briefing thematisch (z. B. 🌍 **Politik & Weltgeschehen**, 💻 **Technologie & Digitales**, 📈 **Wirtschaft & Finanzen**, 🔬 **Wissen & Umwelt** – passe die Kategorien dynamisch an die Meldungen an).
+            - Führe pro Kategorie 2 bis 4 der relevantesten Punkte als gut lesbare Aufzählungspunkte (Bullet Points) mit den wichtigsten Fakten auf.
+            - Nenne bei relevanten Punkten kurz die Quelle in eckigen Klammern (z. B. "[Tagesschau]", "[Heise Online]").
+            - Schließe mit einem inspirierenden "💡 **Gedanke des Tages / Ausblick**" ab.
+            - Vermeide Meta-Floskeln wie "In diesem Briefing fassen wir zusammen". Schreibe lebendig, lesefreundlich und auf den Punkt.
+        """.trimIndent()
+
+        val articlesText = buildString {
+            topArticles.forEachIndexed { index, item ->
+                appendLine("${index + 1}. [${item.feedTitle}] ${item.title}")
+                val snippet = (item.description.ifBlank { item.content }).take(300).replace("\n", " ").trim()
+                if (snippet.isNotBlank()) {
+                    appendLine("   Auszug: $snippet")
+                }
+                if (item.pubDate.isNotBlank()) {
+                    appendLine("   Datum: ${item.pubDate}")
+                }
+                appendLine()
+            }
+        }
+
+        val userPrompt = buildString {
+            appendLine("Feed-Kontext: $feedTitle")
+            appendLine("Anzahl der aktuellen Meldungen: ${topArticles.size}")
+            appendLine("\nAktuelle Schlagzeilen & Inhalte:\n")
+            appendLine(articlesText)
+            appendLine("\nBitte erstelle das strukturierte deutsche Daily Briefing für den heutigen Tag basierend auf diesen Meldungen.")
+        }
+
+        try {
+            val response = executeGeminiRequest(apiKey, model, systemPrompt, userPrompt)
+            Result.success(response)
         } catch (e: Exception) {
             Result.failure(e)
         }

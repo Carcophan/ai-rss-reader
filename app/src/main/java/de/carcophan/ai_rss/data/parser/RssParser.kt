@@ -187,9 +187,16 @@ object RssParser {
                         }
                         val pubDateMillis = parseDateToMillis(currentItemPubDate)
 
+                        val stableId = if (currentItemLink.isNotBlank()) {
+                            "${feed.id}_${currentItemLink.trim().hashCode()}"
+                        } else {
+                            "${feed.id}_${cleanTitle.hashCode()}"
+                        }
+
                         if (cleanTitle.isNotEmpty() || currentItemLink.isNotEmpty()) {
                             items.add(
                                 RssItem(
+                                    id = stableId,
                                     feedId = feed.id,
                                     feedTitle = feed.title.ifBlank { channelTitle.ifBlank { "Unbenannter Feed" } },
                                     title = cleanTitle.ifBlank { "Ohne Titel" },
