@@ -294,7 +294,7 @@ fun RssScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         if (uiState.searchQuery.isBlank() && filteredArticles.isNotEmpty()) {
-                            item(key = "daily_briefing_card") {
+                            item(key = "daily_briefing_card", contentType = "daily_briefing") {
                                 DailyBriefingCard(
                                     feedTitle = uiState.selectedFeed?.title ?: "Alle Feeds",
                                     onClick = {
@@ -305,7 +305,11 @@ fun RssScreen(
                             }
                         }
 
-                        items(filteredArticles, key = { it.id }) { article ->
+                        items(
+                            items = filteredArticles,
+                            key = { it.id },
+                            contentType = { if (!it.imageUrl.isNullOrBlank()) "article_with_image" else "article_text_only" }
+                        ) { article ->
                             ArticleCard(
                                 article = article,
                                 onClick = { selectedArticle = article }

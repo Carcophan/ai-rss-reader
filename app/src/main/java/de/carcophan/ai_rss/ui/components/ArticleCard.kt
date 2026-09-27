@@ -2,6 +2,7 @@ package de.carcophan.ai_rss.ui.components
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -35,6 +37,7 @@ import de.carcophan.ai_rss.data.model.RssItem
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 
 @Composable
 fun ArticleCard(
@@ -45,24 +48,30 @@ fun ArticleCard(
     val context = LocalContext.current
 
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
         )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             // Article Image if available
             if (!article.imageUrl.isNullOrBlank()) {
+                val imageRequest = remember(article.imageUrl) {
+                    ImageRequest.Builder(context)
+                        .data(article.imageUrl)
+                        .crossfade(true)
+                        .build()
+                }
                 AsyncImage(
-                    model = article.imageUrl,
+                    model = imageRequest,
                     contentDescription = null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(180.dp)
-                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                     contentScale = ContentScale.Crop
                 )
             }

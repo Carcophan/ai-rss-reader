@@ -624,17 +624,21 @@ private fun ArticlePageContent(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Full Article Text with clean paragraph formatting
+            // Full Article Text with clean paragraph formatting (visual paragraph after each line break)
             if (fullText.isNotBlank()) {
-                val paragraphs = fullText.split("\n\n").filter { it.isNotBlank() }
+                val paragraphs = remember(fullText) {
+                    fullText.lines()
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                }
                 paragraphs.forEach { paragraph ->
                     Text(
-                        text = paragraph.trim(),
+                        text = paragraph,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.3
+                        lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.35
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
                 }
             } else {
                 Text(
