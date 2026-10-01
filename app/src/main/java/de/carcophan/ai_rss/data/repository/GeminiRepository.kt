@@ -389,7 +389,8 @@ class GeminiRepository(private val context: Context) {
     suspend fun classifyArticlesByKeyword(
         keyword: String,
         articles: List<RssItem>,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        onProgress: ((completed: Int, total: Int) -> Unit)? = null
     ): Result<List<KeywordMatch>> = withContext(Dispatchers.IO) {
         val cleanKeyword = keyword.trim()
         if (cleanKeyword.isBlank()) {
@@ -401,13 +402,16 @@ class GeminiRepository(private val context: Context) {
         }
 
         val cacheKey = cleanKeyword.lowercase()
-        if (!forceRefresh) {
-            val cachedMatches = getCachedKeywordMatches(cacheKey)
-            if (cachedMatches != null && cachedMatches.isNotEmpty()) {
+        if (forceRefresh) {
+            cachePrefs.edit().remove("kw_matches_$cacheKey").apply()
+        }
+
+        val cachedMatches = if (!forceRefresh) getCachedKeywordMatches(cacheKey) else null
+        if (cachedMatches != null && cachedMatches.isNotEmpty()) {
+            val allCached = articles.all { cachedMatches.containsKey(it.id) }
+            if (allCached) {
                 val cachedList = articles.mapNotNull { cachedMatches[it.id] }
-                if (cachedList.size == articles.size) {
-                    return@withContext Result.success(cachedList)
-                }
+                return@withContext Result.success(cachedList)
             }
         }
 
@@ -417,8 +421,18 @@ class GeminiRepository(private val context: Context) {
         }
 
         val model = getModel()
-        // Send up to 50 recent articles to classify
-        val articlesToSend = articles.take(50)
+
+        // Filter articles that are not yet cached
+        val articlesToClassify = if (cachedMatches != null && cachedMatches.isNotEmpty()) {
+            articles.filter { !cachedMatches.containsKey(it.id) }
+        } else {
+            articles
+        }
+
+        if (articlesToClassify.isEmpty()) {
+            val cachedList = articles.mapNotNull { cachedMatches?.get(it.id) }
+            return@withContext Result.success(cachedList)
+        }
 
         val systemPrompt = """
             Du bist ein präziser semantischer Nachrichten-Klassifizierer. Deine Aufgabe ist es, aus den übergebenen nummerierten Nachrichtenartikeln diejenigen herauszufiltern, die inhaltlich oder thematisch zum gesuchten Schlagwort passen.
@@ -426,6 +440,7 @@ class GeminiRepository(private val context: Context) {
             Kriterien für Relevanz:
             - Der Artikel behandelt das Thema, ein direkt verwandtes Teilgebiet, Akteure, Technologien oder wichtige Ereignisse (z. B. gehören Artikel über "ChatGPT", "Nvidia-Chips", "Machine Learning", "LLMs" zum Thema "Künstliche Intelligenz" oder "KI"; Artikel über "Photovoltaik", "Wärmepumpen", "CO2-Ziele" zu "Klimawandel").
             - Beachte Synonyme, Abkürzungen und englische Fachbegriffe.
+            - Analysiere Titel und RSS-Beschreibung sorgfältig.
             - Nimm nur Artikel auf, die einen echten thematischen Bezug haben.
             
             Antworte STRENG als valides JSON-Array, das NUR die passenden Artikel enthält. Verwende für 'index' die Nummer in den eckigen Klammern [1], [2], ...:
@@ -439,30 +454,59 @@ class GeminiRepository(private val context: Context) {
             Falls kein Artikel zum Schlagwort passt, antworte mit: []
         """.trimIndent()
 
-        val userPrompt = buildString {
-            appendLine("Gesuchtes Schlagwort: \"$cleanKeyword\"")
-            appendLine("Anzahl der Artikel: ${articlesToSend.size}")
-            appendLine("\nArtikelliste:\n")
-            articlesToSend.forEachIndexed { index, item ->
-                val num = index + 1
-                appendLine("[$num] [${item.feedTitle}] ${item.title}")
-                val snippet = (item.description.ifBlank { item.content }).take(200).replace("\n", " ").trim()
-                if (snippet.isNotBlank()) {
-                    appendLine("Auszug: $snippet")
-                }
-                appendLine()
-            }
-            appendLine("Bewerte die Artikel und gib das JSON-Array der relevanten Treffer zurück.")
-        }
+        val newlyClassifiedMatches = mutableListOf<KeywordMatch>()
+        val chunks = articlesToClassify.chunked(50)
+        var processedCount = 0
 
         try {
-            val response = executeGeminiRequest(apiKey, model, systemPrompt, userPrompt)
-            val matches = parseKeywordMatchesJson(response, articlesToSend)
+            for (chunk in chunks) {
+                val userPrompt = buildString {
+                    appendLine("Gesuchtes Schlagwort: \"$cleanKeyword\"")
+                    appendLine("Anzahl der Artikel in dieser Liste: ${chunk.size}")
+                    appendLine("\nArtikelliste:\n")
+                    chunk.forEachIndexed { index, item ->
+                        val num = index + 1
+                        appendLine("[$num] [${item.feedTitle}] ${item.title}")
+                        val desc = (item.description.ifBlank { item.content }).replace("\r", " ").replace("\n", " ").trim()
+                        if (desc.isNotBlank()) {
+                            // Full RSS description (with high safety threshold for rare feeds embedding giant blobs)
+                            val safeDesc = if (desc.length > 5000) desc.take(5000) + "..." else desc
+                            appendLine("Beschreibung: $safeDesc")
+                        }
+                        appendLine()
+                    }
+                    appendLine("Bewerte die Artikel anhand von Titel und Beschreibung und gib das JSON-Array der relevanten Treffer zurück.")
+                }
 
-            // Cache matches
-            saveCachedKeywordMatches(cacheKey, matches)
+                val response = executeGeminiRequest(apiKey, model, systemPrompt, userPrompt)
+                val parsedMatches = parseKeywordMatchesJson(response, chunk)
+                val relevantById = parsedMatches.filter { it.isRelevant }.associateBy { it.articleId }
 
-            Result.success(matches)
+                // Map every item in the chunk so non-matching items are recorded as isRelevant = false
+                chunk.forEach { article ->
+                    val match = relevantById[article.id] ?: KeywordMatch(
+                        articleId = article.id,
+                        isRelevant = false,
+                        reason = "",
+                        relevanceScore = 0
+                    )
+                    newlyClassifiedMatches.add(match)
+                }
+
+                processedCount += chunk.size
+                onProgress?.invoke(processedCount, articlesToClassify.size)
+            }
+
+            // Cache newly classified matches
+            saveCachedKeywordMatches(cacheKey, newlyClassifiedMatches)
+
+            // Return full combined list for all requested articles
+            val allCached = getCachedKeywordMatches(cacheKey) ?: emptyMap()
+            val resultList = articles.mapNotNull { article ->
+                allCached[article.id] ?: newlyClassifiedMatches.firstOrNull { it.articleId == article.id }
+            }
+
+            Result.success(resultList)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -500,7 +544,7 @@ class GeminiRepository(private val context: Context) {
             // Generation config
             val genConfig = JSONObject().apply {
                 put("temperature", 0.2)
-                put("maxOutputTokens", 2048)
+                put("maxOutputTokens", 4096)
             }
             put("generationConfig", genConfig)
         }

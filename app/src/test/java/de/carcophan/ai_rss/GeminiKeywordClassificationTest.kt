@@ -154,4 +154,35 @@ class GeminiKeywordClassificationTest {
         val invalidMatches = GeminiRepository.parseKeywordMatchesJson("Das ist kein JSON.")
         assertTrue(invalidMatches.isEmpty())
     }
+
+    @Test
+    fun parseKeywordMatchesJson_largeArticleList_mapsCorrectlyAcrossEntireList() {
+        val articles = (1..60).map { i ->
+            de.carcophan.ai_rss.data.model.RssItem(
+                id = "item_id_$i",
+                feedId = "feed_$i",
+                feedTitle = "Feed $i",
+                title = "Titel $i",
+                link = "https://example.com/$i",
+                description = "Volle RSS-Beschreibung für Artikel $i mit ausführlichem Kontext.",
+                pubDate = "Heute"
+            )
+        }
+
+        val json = """
+            [
+              {
+                "index": 55,
+                "reason": "Passt perfekt zu Artikel 55",
+                "relevanceScore": 9
+              }
+            ]
+        """.trimIndent()
+
+        val matches = GeminiRepository.parseKeywordMatchesJson(json, articles)
+        assertEquals(1, matches.size)
+        assertEquals("item_id_55", matches[0].articleId)
+        assertTrue(matches[0].isRelevant)
+        assertEquals("Passt perfekt zu Artikel 55", matches[0].reason)
+    }
 }

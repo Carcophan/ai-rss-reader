@@ -518,17 +518,32 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val modelName = geminiRepository.getModel()
+        val totalCount = articles.size
         _uiState.update {
             it.copy(
                 keywordFilterState = KeywordFilterState(
                     activeKeyword = keyword,
                     isLoading = true,
-                    statusMessage = "Gemini ($modelName) analysiert Meldungen für \"${keyword.text}\"..."
+                    statusMessage = "Gemini ($modelName) analysiert alle $totalCount Meldungen für \"${keyword.text}\"..."
                 )
             )
         }
 
-        val result = geminiRepository.classifyArticlesByKeyword(keyword.text, articles, forceRefresh)
+        val result = geminiRepository.classifyArticlesByKeyword(
+            keyword = keyword.text,
+            articles = articles,
+            forceRefresh = forceRefresh
+        ) { completed, total ->
+            _uiState.update { state ->
+                val current = state.keywordFilterState ?: KeywordFilterState(activeKeyword = keyword)
+                state.copy(
+                    keywordFilterState = current.copy(
+                        isLoading = true,
+                        statusMessage = "Gemini ($modelName) analysiert Meldungen ($completed von $total) für \"${keyword.text}\"..."
+                    )
+                )
+            }
+        }
         result.onSuccess { matches ->
             val relevantMatches = matches.filter { it.isRelevant }
             val matchedIds = relevantMatches.map { it.articleId }.toSet()
