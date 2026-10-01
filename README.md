@@ -23,6 +23,7 @@ A modern, fast, and intelligent Android RSS reader built entirely with **Jetpack
 
 ### 🤖 Gemini AI Integration
 - **Full Article Extraction**: Built-in web scraper (`ArticleWebExtractor`) strips boilerplate, scripts, and navigation to retrieve clean, readable article content (with intelligent cookie/consent wall handling, e.g., Golem.de).
+- **Semantische Schlagwort-Filterung & Kategorisierung**: Filtert und kategorisiert Meldungen über alle RSS-Feeds hinweg anhand flexibler Schlagwörter. Gemini erkennt thematische Zusammenhänge über reine Textsuche hinaus und blendet prägnante Relevanz-Begründungen direkt auf den Artikelkarten ein. Schlagwörter können beliebig angelegt, aktiviert und gelöscht werden.
 - **Executive Summaries**: One-tap AI summarization generating:
   - 📌 **Key Takeaway** (*Kernbotschaft*): 1–2 punchy sentences summarizing the core message.
   - 🔍 **Key Points** (*Wichtigste Punkte*): 3–6 structured bullet points detailing background and facts.
@@ -34,6 +35,7 @@ A modern, fast, and intelligent Android RSS reader built entirely with **Jetpack
 
 ### 🎨 Modern Android Architecture & UI
 - **100% Jetpack Compose**: Pure Compose UI adopting the latest Material 3 guidelines and dynamic color schemes.
+- **Interactive Keyword Filter Chips**: Horizontal scrollable FilterChip bar with one-tap selection, instant deletion, and full keyword management modal.
 - **Rich Markdown Rendering**: Custom Compose-native markdown parser for article summaries, supporting bold, italic, code blocks, bullet points, and headers.
 - **Coil Image Loading & Caching**: Efficient asynchronous image loading with dedicated 25% RAM memory caching and a 150 MB disk cache for thumbnails and lead images.
 - **Edge-to-Edge Design**: Full edge-to-edge support with immersive system bars.
@@ -51,24 +53,29 @@ de.carcophan.ai_rss
 ├── data
 │   ├── model
 │   │   ├── Feed.kt             # Data model for RSS/Atom feed sources
+│   │   ├── Keyword.kt          # Data model for user-defined filter keywords
+│   │   ├── KeywordMatch.kt     # Data model for Gemini classification results
 │   │   └── RssItem.kt          # Data model for individual articles
 │   ├── parser
 │   │   └── RssParser.kt        # Custom XML Pull Parser for RSS 2.0 & Atom feeds
 │   └── repository
 │       ├── ArticleWebExtractor.kt  # Web scraper for extracting clean full-text articles
 │       ├── FeedRepository.kt   # Feed persistence & concurrent network feed fetching
-│       └── GeminiRepository.kt # Google Gemini API client, caching & prompts
+│       ├── GeminiRepository.kt # Google Gemini API client, caching & prompts
+│       └── KeywordRepository.kt# Keyword persistence and default suggestions
 └── ui
     ├── RssViewModel.kt         # UI state management, coroutine orchestration
     ├── RssScreen.kt            # Main screen combining top bar, list, drawer, and sheets
     ├── components
     │   ├── AddFeedDialog.kt        # Dialog for adding custom feeds and presets
-    │   ├── ArticleCard.kt          # Feed list item card with Coil image
+    │   ├── ArticleCard.kt          # Feed list item card with Coil image & AI match badge
     │   ├── ArticleDetailSheet.kt   # Modal bottom sheet for article reading & AI summary
     │   ├── DailyBriefingCard.kt    # Header banner for the Daily Briefing
     │   ├── DailyBriefingSheet.kt   # Fullscreen/sheet daily overview modal
     │   ├── FeedDrawer.kt           # Side navigation drawer for feed selection
     │   ├── GeminiSettingsDialog.kt # Settings dialog for API Key & model configuration
+    │   ├── KeywordChipRow.kt       # Scrollable filter chip bar for active keywords
+    │   ├── ManageKeywordsDialog.kt # Modal dialog for managing/deleting keywords
     │   └── MarkdownText.kt         # Custom Jetpack Compose Markdown renderer
     └── theme
         ├── Color.kt

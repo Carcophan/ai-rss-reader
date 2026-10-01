@@ -4,10 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.carcophan.ai_rss.data.model.Feed
+import de.carcophan.ai_rss.data.model.Keyword
 import de.carcophan.ai_rss.data.model.RssItem
 import de.carcophan.ai_rss.data.repository.ArticleWebExtractor
 import de.carcophan.ai_rss.data.repository.FeedRepository
 import de.carcophan.ai_rss.data.repository.GeminiRepository
+import de.carcophan.ai_rss.data.repository.KeywordRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +31,15 @@ data class DailyBriefingState(
     val generatedDate: String? = null
 )
 
+data class KeywordFilterState(
+    val activeKeyword: Keyword? = null,
+    val isLoading: Boolean = false,
+    val statusMessage: String? = null,
+    val matchedArticleIds: Set<String> = emptySet(),
+    val reasonsByArticleId: Map<String, String> = emptyMap(),
+    val errorMessage: String? = null
+)
+
 data class RssUiState(
     val feeds: List<Feed> = emptyList(),
     val selectedFeed: Feed? = null,
@@ -38,19 +49,23 @@ data class RssUiState(
     val errorMessage: String? = null,
     val searchQuery: String = "",
     val summaryStates: Map<String, ArticleSummaryState> = emptyMap(),
-    val dailyBriefingState: DailyBriefingState = DailyBriefingState()
+    val dailyBriefingState: DailyBriefingState = DailyBriefingState(),
+    val keywords: List<Keyword> = emptyList(),
+    val keywordFilterState: KeywordFilterState = KeywordFilterState()
 )
 
 class RssViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = FeedRepository(application.applicationContext)
     val geminiRepository = GeminiRepository(application.applicationContext)
+    val keywordRepository = KeywordRepository(application.applicationContext)
 
     private val _uiState = MutableStateFlow(RssUiState())
     val uiState: StateFlow<RssUiState> = _uiState.asStateFlow()
 
     init {
         loadFeedsAndArticles()
+        loadKeywords()
     }
 
     fun loadFeedsAndArticles() {
@@ -77,7 +92,14 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectFeed(feed: Feed?) {
-        _uiState.update { it.copy(selectedFeed = feed, isLoading = true, errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                selectedFeed = feed,
+                isLoading = true,
+                errorMessage = null,
+                keywordFilterState = if (feed != null) KeywordFilterState() else it.keywordFilterState
+            )
+        }
         viewModelScope.launch {
             try {
                 val articles = if (feed != null) {
@@ -354,6 +376,173 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                 }
+            }
+        }
+    }
+
+    // --- Keyword Categorization & Filtering ---
+
+    fun loadKeywords() {
+        _uiState.update { it.copy(keywords = keywordRepository.getKeywords()) }
+    }
+
+    fun addKeyword(text: String, onComplete: () -> Unit = {}) {
+        val result = keywordRepository.addKeyword(text)
+        result.onSuccess { newKeyword ->
+            loadKeywords()
+            selectKeyword(newKeyword)
+            onComplete()
+        }.onFailure { error ->
+            _uiState.update { it.copy(errorMessage = error.localizedMessage ?: "Fehler beim Hinzufügen des Schlagworts.") }
+        }
+    }
+
+    fun deleteKeyword(keywordId: String) {
+        val wasActive = _uiState.value.keywordFilterState.activeKeyword?.id == keywordId
+        keywordRepository.deleteKeyword(keywordId)
+        loadKeywords()
+        if (wasActive) {
+            clearActiveKeyword()
+        }
+    }
+
+    fun selectKeyword(keyword: Keyword?) {
+        if (keyword == null) {
+            clearActiveKeyword()
+            return
+        }
+
+        if (!geminiRepository.hasApiKey()) {
+            _uiState.update {
+                it.copy(
+                    keywordFilterState = KeywordFilterState(
+                        activeKeyword = keyword,
+                        isLoading = false,
+                        errorMessage = "MISSING_API_KEY"
+                    )
+                )
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            // When filtering by keyword, user wants to filter across all feeds ("aus allen rss feeds")
+            val articlesToClassify = if (_uiState.value.selectedFeed != null) {
+                _uiState.update { it.copy(selectedFeed = null, isLoading = true) }
+                val allArticles = repository.fetchAllArticles(_uiState.value.feeds)
+                _uiState.update { it.copy(articles = allArticles, isLoading = false) }
+                allArticles
+            } else if (_uiState.value.articles.isEmpty()) {
+                val allArticles = repository.fetchAllArticles(_uiState.value.feeds)
+                _uiState.update { it.copy(articles = allArticles) }
+                allArticles
+            } else {
+                _uiState.value.articles
+            }
+
+            classifyArticlesForKeyword(keyword, articlesToClassify, forceRefresh = false)
+        }
+    }
+
+    fun applyFallbackTextFilter(keyword: Keyword) {
+        val cleanKw = keyword.text.lowercase().trim()
+        val queryWords = cleanKw.split(Regex("[\\s,-]+")).filter { it.length > 2 }
+
+        val matchingArticles = _uiState.value.articles.filter { article ->
+            val text = "${article.title} ${article.description} ${article.content}".lowercase()
+            if (text.contains(cleanKw)) {
+                true
+            } else if (cleanKw.length <= 4 && text.contains("\\b$cleanKw\\b".toRegex())) {
+                true
+            } else {
+                queryWords.isNotEmpty() && queryWords.any { word ->
+                    text.contains(word)
+                }
+            }
+        }
+
+        val matchedIds = matchingArticles.map { it.id }.toSet()
+        val reasons = matchingArticles.associate { it.id to "Textsuche: Enthält \"${keyword.text}\"" }
+
+        _uiState.update {
+            it.copy(
+                keywordFilterState = KeywordFilterState(
+                    activeKeyword = keyword,
+                    isLoading = false,
+                    matchedArticleIds = matchedIds,
+                    reasonsByArticleId = reasons,
+                    errorMessage = null
+                )
+            )
+        }
+    }
+
+    fun refreshActiveKeywordFilter() {
+        val current = _uiState.value.keywordFilterState.activeKeyword ?: return
+        viewModelScope.launch {
+            classifyArticlesForKeyword(current, _uiState.value.articles, forceRefresh = true)
+        }
+    }
+
+    fun clearActiveKeyword() {
+        _uiState.update { it.copy(keywordFilterState = KeywordFilterState()) }
+    }
+
+    private suspend fun classifyArticlesForKeyword(
+        keyword: Keyword,
+        articles: List<RssItem>,
+        forceRefresh: Boolean
+    ) {
+        if (articles.isEmpty()) {
+            _uiState.update {
+                it.copy(
+                    keywordFilterState = KeywordFilterState(
+                        activeKeyword = keyword,
+                        isLoading = false,
+                        errorMessage = "Keine Artikel zum Filtern vorhanden."
+                    )
+                )
+            }
+            return
+        }
+
+        val modelName = geminiRepository.getModel()
+        _uiState.update {
+            it.copy(
+                keywordFilterState = KeywordFilterState(
+                    activeKeyword = keyword,
+                    isLoading = true,
+                    statusMessage = "Gemini ($modelName) analysiert Meldungen für \"${keyword.text}\"..."
+                )
+            )
+        }
+
+        val result = geminiRepository.classifyArticlesByKeyword(keyword.text, articles, forceRefresh)
+        result.onSuccess { matches ->
+            val relevantMatches = matches.filter { it.isRelevant }
+            val matchedIds = relevantMatches.map { it.articleId }.toSet()
+            val reasons = relevantMatches.associate { it.articleId to it.reason }
+
+            _uiState.update {
+                it.copy(
+                    keywordFilterState = KeywordFilterState(
+                        activeKeyword = keyword,
+                        isLoading = false,
+                        matchedArticleIds = matchedIds,
+                        reasonsByArticleId = reasons,
+                        errorMessage = null
+                    )
+                )
+            }
+        }.onFailure { error ->
+            _uiState.update {
+                it.copy(
+                    keywordFilterState = KeywordFilterState(
+                        activeKeyword = keyword,
+                        isLoading = false,
+                        errorMessage = error.localizedMessage ?: "Fehler bei der KI-Kategorisierung."
+                    )
+                )
             }
         }
     }

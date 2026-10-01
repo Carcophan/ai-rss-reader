@@ -1,6 +1,7 @@
 package de.carcophan.ai_rss.data.repository
 
 import android.content.Context
+import de.carcophan.ai_rss.data.model.KeywordMatch
 import de.carcophan.ai_rss.data.model.RssItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -28,6 +29,95 @@ class GeminiRepository(private val context: Context) {
             "gemini-1.5-flash",
             "gemini-2.5-flash"
         )
+
+        fun parseKeywordMatchesJson(
+            jsonString: String,
+            articles: List<RssItem> = emptyList()
+        ): List<KeywordMatch> {
+            val cleanJson = jsonString.trim()
+                .removePrefix("```json")
+                .removePrefix("```JSON")
+                .removePrefix("```")
+                .removeSuffix("```")
+                .trim()
+
+            val jsonArray = try {
+                if (cleanJson.startsWith("[")) {
+                    JSONArray(cleanJson)
+                } else {
+                    val start = cleanJson.indexOf('[')
+                    val end = cleanJson.lastIndexOf(']')
+                    if (start != -1 && end != -1 && end > start) {
+                        JSONArray(cleanJson.substring(start, end + 1))
+                    } else {
+                        JSONArray()
+                    }
+                }
+            } catch (_: Exception) {
+                JSONArray()
+            }
+
+            val idToArticle = articles.associateBy { it.id }
+            val list = mutableListOf<KeywordMatch>()
+
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.optJSONObject(i) ?: continue
+                val reason = obj.optString("reason", "")
+                val score = obj.optInt("relevanceScore", obj.optInt("score", 7))
+                val relevant = obj.optBoolean("relevant", true)
+
+                // Resolve target article
+                var targetArticle: RssItem? = null
+
+                // 1. Try numeric index
+                val rawIndex = when {
+                    obj.has("index") -> obj.optInt("index", -1)
+                    obj.has("articleNumber") -> obj.optInt("articleNumber", -1)
+                    obj.optInt("id", -1) > 0 -> obj.optInt("id", -1)
+                    else -> -1
+                }
+
+                if (rawIndex in 1..articles.size) {
+                    targetArticle = articles[rawIndex - 1]
+                }
+
+                // 2. Try string id
+                if (targetArticle == null && obj.has("id")) {
+                    val idStr = obj.optString("id", "").trim()
+                    if (idStr.isNotBlank()) {
+                        targetArticle = idToArticle[idStr]
+                        if (targetArticle == null) {
+                            val digits = idStr.filter { it.isDigit() }.toIntOrNull()
+                            if (digits != null && digits in 1..articles.size) {
+                                targetArticle = articles[digits - 1]
+                            }
+                        }
+                    }
+                }
+
+                if (targetArticle != null) {
+                    list.add(
+                        KeywordMatch(
+                            articleId = targetArticle.id,
+                            isRelevant = relevant,
+                            reason = if (relevant) reason.ifBlank { "Passend zum Thema" } else reason,
+                            relevanceScore = score
+                        )
+                    )
+                } else if (articles.isEmpty()) {
+                    val fallbackId = obj.optString("id", "").ifBlank { "item-${i + 1}" }
+                    list.add(
+                        KeywordMatch(
+                            articleId = fallbackId,
+                            isRelevant = relevant,
+                            reason = if (relevant) reason.ifBlank { "Passend zum Thema" } else reason,
+                            relevanceScore = score
+                        )
+                    )
+                }
+            }
+            return list
+        }
     }
 
     private val cachePrefs = context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE)
@@ -66,6 +156,43 @@ class GeminiRepository(private val context: Context) {
 
     fun saveCachedBriefing(key: String, briefing: String) {
         cachePrefs.edit().putString("briefing_$key", briefing).apply()
+    }
+
+    fun getCachedKeywordMatches(cacheKey: String): Map<String, KeywordMatch>? {
+        val jsonString = cachePrefs.getString("kw_matches_$cacheKey", null) ?: return null
+        return try {
+            val array = JSONArray(jsonString)
+            val map = mutableMapOf<String, KeywordMatch>()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val id = obj.getString("id")
+                map[id] = KeywordMatch(
+                    articleId = id,
+                    isRelevant = obj.getBoolean("relevant"),
+                    reason = obj.optString("reason", ""),
+                    relevanceScore = obj.optInt("score", 0)
+                )
+            }
+            map
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun saveCachedKeywordMatches(cacheKey: String, matches: List<KeywordMatch>) {
+        val existing = getCachedKeywordMatches(cacheKey)?.toMutableMap() ?: mutableMapOf()
+        matches.forEach { existing[it.articleId] = it }
+        val array = JSONArray()
+        for ((_, match) in existing) {
+            val obj = JSONObject().apply {
+                put("id", match.articleId)
+                put("relevant", match.isRelevant)
+                put("reason", match.reason)
+                put("score", match.relevanceScore)
+            }
+            array.put(obj)
+        }
+        cachePrefs.edit().putString("kw_matches_$cacheKey", array.toString()).apply()
     }
 
     fun clearCache() {
@@ -206,6 +333,91 @@ class GeminiRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Categorize and filter articles for a given keyword using Gemini API.
+     */
+    suspend fun classifyArticlesByKeyword(
+        keyword: String,
+        articles: List<RssItem>,
+        forceRefresh: Boolean = false
+    ): Result<List<KeywordMatch>> = withContext(Dispatchers.IO) {
+        val cleanKeyword = keyword.trim()
+        if (cleanKeyword.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Schlagwort darf nicht leer sein."))
+        }
+
+        if (articles.isEmpty()) {
+            return@withContext Result.success(emptyList())
+        }
+
+        val cacheKey = cleanKeyword.lowercase()
+        if (!forceRefresh) {
+            val cachedMatches = getCachedKeywordMatches(cacheKey)
+            if (cachedMatches != null && cachedMatches.isNotEmpty()) {
+                val cachedList = articles.mapNotNull { cachedMatches[it.id] }
+                if (cachedList.size == articles.size) {
+                    return@withContext Result.success(cachedList)
+                }
+            }
+        }
+
+        val apiKey = getApiKey()
+        if (apiKey.isBlank()) {
+            return@withContext Result.failure(IllegalStateException("MISSING_API_KEY"))
+        }
+
+        val model = getModel()
+        // Send up to 50 recent articles to classify
+        val articlesToSend = articles.take(50)
+
+        val systemPrompt = """
+            Du bist ein präziser semantischer Nachrichten-Klassifizierer. Deine Aufgabe ist es, aus den übergebenen nummerierten Nachrichtenartikeln diejenigen herauszufiltern, die inhaltlich oder thematisch zum gesuchten Schlagwort passen.
+            
+            Kriterien für Relevanz:
+            - Der Artikel behandelt das Thema, ein direkt verwandtes Teilgebiet, Akteure, Technologien oder wichtige Ereignisse (z. B. gehören Artikel über "ChatGPT", "Nvidia-Chips", "Machine Learning", "LLMs" zum Thema "Künstliche Intelligenz" oder "KI"; Artikel über "Photovoltaik", "Wärmepumpen", "CO2-Ziele" zu "Klimawandel").
+            - Beachte Synonyme, Abkürzungen und englische Fachbegriffe.
+            - Nimm nur Artikel auf, die einen echten thematischen Bezug haben.
+            
+            Antworte STRENG als valides JSON-Array, das NUR die passenden Artikel enthält. Verwende für 'index' die Nummer in den eckigen Klammern [1], [2], ...:
+            [
+              {
+                "index": 1,
+                "reason": "1 kurzer prägnanter Satz auf Deutsch, warum dieser Artikel zum Thema passt",
+                "relevanceScore": 8
+              }
+            ]
+            Falls kein Artikel zum Schlagwort passt, antworte mit: []
+        """.trimIndent()
+
+        val userPrompt = buildString {
+            appendLine("Gesuchtes Schlagwort: \"$cleanKeyword\"")
+            appendLine("Anzahl der Artikel: ${articlesToSend.size}")
+            appendLine("\nArtikelliste:\n")
+            articlesToSend.forEachIndexed { index, item ->
+                val num = index + 1
+                appendLine("[$num] [${item.feedTitle}] ${item.title}")
+                val snippet = (item.description.ifBlank { item.content }).take(200).replace("\n", " ").trim()
+                if (snippet.isNotBlank()) {
+                    appendLine("Auszug: $snippet")
+                }
+                appendLine()
+            }
+            appendLine("Bewerte die Artikel und gib das JSON-Array der relevanten Treffer zurück.")
+        }
+
+        try {
+            val response = executeGeminiRequest(apiKey, model, systemPrompt, userPrompt)
+            val matches = parseKeywordMatchesJson(response, articlesToSend)
+
+            // Cache matches
+            saveCachedKeywordMatches(cacheKey, matches)
+
+            Result.success(matches)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun executeGeminiRequest(
         apiKey: String,
         model: String,
@@ -237,7 +449,7 @@ class GeminiRepository(private val context: Context) {
 
             // Generation config
             val genConfig = JSONObject().apply {
-                put("temperature", 0.3)
+                put("temperature", 0.2)
                 put("maxOutputTokens", 2048)
             }
             put("generationConfig", genConfig)

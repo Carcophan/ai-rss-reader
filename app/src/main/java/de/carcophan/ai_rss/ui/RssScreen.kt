@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -22,10 +23,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -36,11 +40,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -59,6 +65,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material.icons.filled.WbSunny
 import de.carcophan.ai_rss.data.model.RssItem
@@ -69,6 +78,8 @@ import de.carcophan.ai_rss.ui.components.DailyBriefingCard
 import de.carcophan.ai_rss.ui.components.DailyBriefingSheet
 import de.carcophan.ai_rss.ui.components.FeedDrawer
 import de.carcophan.ai_rss.ui.components.GeminiSettingsDialog
+import de.carcophan.ai_rss.ui.components.KeywordChipRow
+import de.carcophan.ai_rss.ui.components.ManageKeywordsDialog
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,6 +95,7 @@ fun RssScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var showGeminiSettings by remember { mutableStateOf(false) }
     var showDailyBriefing by remember { mutableStateOf(false) }
+    var showManageKeywordsDialog by remember { mutableStateOf(false) }
     var selectedArticle by remember { mutableStateOf<RssItem?>(null) }
     var isSearchActive by remember { mutableStateOf(false) }
 
@@ -95,18 +107,24 @@ fun RssScreen(
         }
     }
 
-    // Filter articles based on search query
-    val filteredArticles = remember(uiState.articles, uiState.searchQuery) {
-        if (uiState.searchQuery.isBlank()) {
-            uiState.articles
-        } else {
+    // Filter articles based on active keyword and search query
+    val filteredArticles = remember(uiState.articles, uiState.searchQuery, uiState.keywordFilterState) {
+        var list = uiState.articles
+        // 1. Keyword filter (Gemini)
+        if (uiState.keywordFilterState.activeKeyword != null && !uiState.keywordFilterState.isLoading) {
+            val matchedIds = uiState.keywordFilterState.matchedArticleIds
+            list = list.filter { it.id in matchedIds }
+        }
+        // 2. Search query filter
+        if (uiState.searchQuery.isNotBlank()) {
             val q = uiState.searchQuery.trim().lowercase()
-            uiState.articles.filter {
+            list = list.filter {
                 it.title.lowercase().contains(q) ||
                         it.description.lowercase().contains(q) ||
                         it.feedTitle.lowercase().contains(q)
             }
         }
+        list
     }
 
     ModalNavigationDrawer(
@@ -223,6 +241,53 @@ fun RssScreen(
                         )
                     }
 
+                    // Keyword Chip Row for filtering
+                    KeywordChipRow(
+                        keywords = uiState.keywords,
+                        activeKeyword = uiState.keywordFilterState.activeKeyword,
+                        onSelectKeyword = { keyword ->
+                            viewModel.selectKeyword(keyword)
+                        },
+                        onClearFilter = {
+                            viewModel.clearActiveKeyword()
+                        },
+                        onDeleteKeyword = { keyword ->
+                            viewModel.deleteKeyword(keyword.id)
+                        },
+                        onAddKeywordClick = {
+                            showManageKeywordsDialog = true
+                        },
+                        onManageKeywordsClick = {
+                            showManageKeywordsDialog = true
+                        }
+                    )
+
+                    // Keyword AI Analysis Progress Bar
+                    if (uiState.keywordFilterState.isLoading) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        uiState.keywordFilterState.statusMessage?.let { status ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = status,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
                     // Progress bar when updating
                     if (uiState.isLoading) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -267,30 +332,145 @@ fun RssScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.RssFeed,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.outline
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = if (uiState.searchQuery.isNotEmpty()) {
-                                "Keine passenden Artikel für \"${uiState.searchQuery}\" gefunden."
-                            } else if (uiState.feeds.isEmpty()) {
-                                "Keine Feeds vorhanden.\nFüge deine gewünschten RSS-Feed-Adressen hinzu!"
-                            } else {
-                                "Keine Artikel für diesen Feed gefunden."
-                            },
-                            style = MaterialTheme.typography.bodyLarge,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Button(onClick = { showAddDialog = true }) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.size(8.dp))
-                            Text("Feed-URL hinzufügen")
+                        val kwState = uiState.keywordFilterState
+                        when {
+                            kwState.errorMessage == "MISSING_API_KEY" -> {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "Gemini API-Key erforderlich",
+                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Für die intelligente KI-Kategorisierung und Filterung nach \"${kwState.activeKeyword?.text}\" wird ein Gemini API-Key benötigt.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(20.dp))
+                                Button(onClick = { showGeminiSettings = true }) {
+                                    Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                    Text("API-Key einrichten")
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(onClick = { kwState.activeKeyword?.let { viewModel.applyFallbackTextFilter(it) } }) {
+                                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                    Text("Einfache Stichwortsuche nutzen")
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                TextButton(onClick = { viewModel.clearActiveKeyword() }) {
+                                    Text("Filter aufheben")
+                                }
+                            }
+                            kwState.errorMessage != null -> {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "Fehler bei der KI-Analyse",
+                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = kwState.errorMessage ?: "Unbekannter Fehler",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(20.dp))
+                                Button(onClick = { viewModel.refreshActiveKeywordFilter() }) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                    Text("Erneut versuchen")
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(onClick = { kwState.activeKeyword?.let { viewModel.applyFallbackTextFilter(it) } }) {
+                                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                    Text("Einfache Stichwortsuche nutzen")
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                TextButton(onClick = { viewModel.clearActiveKeyword() }) {
+                                    Text("Filter aufheben")
+                                }
+                            }
+                            kwState.activeKeyword != null -> {
+                                Icon(
+                                    imageVector = Icons.Default.SearchOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.outline
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "Keine Treffer für \"${kwState.activeKeyword?.text}\"",
+                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "In den aktuellen Meldungen aller Feeds wurden keine passenden Artikel zu diesem Thema gefunden.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(20.dp))
+                                OutlinedButton(onClick = { kwState.activeKeyword?.let { viewModel.applyFallbackTextFilter(it) } }) {
+                                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                    Text("Mit Volltextsuche versuchen")
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(onClick = { viewModel.clearActiveKeyword() }) {
+                                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                    Text("Filter aufheben")
+                                }
+                            }
+                            else -> {
+                                Icon(
+                                    imageVector = Icons.Default.RssFeed,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.outline
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = if (uiState.searchQuery.isNotEmpty()) {
+                                        "Keine passenden Artikel für \"${uiState.searchQuery}\" gefunden."
+                                    } else if (uiState.feeds.isEmpty()) {
+                                        "Keine Feeds vorhanden.\nFüge deine gewünschten RSS-Feed-Adressen hinzu!"
+                                    } else {
+                                        "Keine Artikel für diesen Feed gefunden."
+                                    },
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(20.dp))
+                                Button(onClick = { showAddDialog = true }) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                    Text("Feed-URL hinzufügen")
+                                }
+                            }
                         }
                     }
                 } else {
@@ -299,7 +479,78 @@ fun RssScreen(
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        if (uiState.searchQuery.isBlank() && filteredArticles.isNotEmpty()) {
+                        // Keyword Filter Banner
+                        if (uiState.keywordFilterState.activeKeyword != null && !uiState.keywordFilterState.isLoading) {
+                            item(key = "keyword_filter_banner", contentType = "filter_banner") {
+                                Card(
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.AutoAwesome,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column {
+                                                Text(
+                                                    text = "KI-Filter: \"${uiState.keywordFilterState.activeKeyword?.text}\"",
+                                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                )
+                                                Text(
+                                                    text = "${filteredArticles.size} passende Meldungen aus allen Feeds",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                                )
+                                            }
+                                        }
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            IconButton(
+                                                onClick = { viewModel.refreshActiveKeywordFilter() },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Refresh,
+                                                    contentDescription = "Erneut analysieren",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { viewModel.clearActiveKeyword() },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Filter entfernen",
+                                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (uiState.searchQuery.isBlank() && uiState.keywordFilterState.activeKeyword == null && filteredArticles.isNotEmpty()) {
                             item(key = "daily_briefing_card", contentType = "daily_briefing") {
                                 DailyBriefingCard(
                                     feedTitle = uiState.selectedFeed?.title ?: "Alle Feeds",
@@ -318,7 +569,8 @@ fun RssScreen(
                         ) { article ->
                             ArticleCard(
                                 article = article,
-                                onClick = { selectedArticle = article }
+                                onClick = { selectedArticle = article },
+                                geminiMatchReason = uiState.keywordFilterState.reasonsByArticleId[article.id]
                             )
                         }
                     }
@@ -379,6 +631,24 @@ fun RssScreen(
             },
             onOpenGeminiSettings = { showGeminiSettings = true },
             onDismiss = { showDailyBriefing = false }
+        )
+    }
+
+    // Manage Keywords Dialog
+    if (showManageKeywordsDialog) {
+        ManageKeywordsDialog(
+            keywords = uiState.keywords,
+            activeKeyword = uiState.keywordFilterState.activeKeyword,
+            onAddKeyword = { text ->
+                viewModel.addKeyword(text)
+            },
+            onDeleteKeyword = { id ->
+                viewModel.deleteKeyword(id)
+            },
+            onSelectKeyword = { keyword ->
+                viewModel.selectKeyword(keyword)
+            },
+            onDismiss = { showManageKeywordsDialog = false }
         )
     }
 }
