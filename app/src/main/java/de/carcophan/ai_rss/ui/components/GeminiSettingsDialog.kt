@@ -2,6 +2,7 @@ package de.carcophan.ai_rss.ui.components
 
 import android.content.Intent
 import android.net.Uri
+import de.carcophan.ai_rss.data.model.SummaryLevel
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -71,6 +72,7 @@ fun GeminiSettingsDialog(
     var isCustomSelected by remember {
         mutableStateOf(selectedModel !in GeminiRepository.POPULAR_MODELS)
     }
+    var selectedSummaryLevel by remember { mutableStateOf(geminiRepository.getSummaryLevel()) }
 
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isTestingConnection by remember { mutableStateOf(false) }
@@ -275,6 +277,48 @@ fun GeminiSettingsDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Summary Level Section
+                Text(
+                    text = "Zusammenfassungs-Stufe (Standard)",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Wähle den bevorzugten Detaillierungsgrad für Artikel.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                SummaryLevel.entries.forEach { level ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedSummaryLevel = level }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = (selectedSummaryLevel == level),
+                            onClick = { selectedSummaryLevel = level }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text(
+                                text = level.title,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = level.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 // Test Connection Button
                 OutlinedButton(
                     onClick = { runTest() },
@@ -341,6 +385,7 @@ fun GeminiSettingsDialog(
                     }
                     geminiRepository.setApiKey(apiKey)
                     geminiRepository.setModel(finalModel)
+                    geminiRepository.setSummaryLevel(selectedSummaryLevel)
                     onSaveSuccess()
                     onDismiss()
                 }

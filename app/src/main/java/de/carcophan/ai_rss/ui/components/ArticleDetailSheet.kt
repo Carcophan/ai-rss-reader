@@ -44,6 +44,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import de.carcophan.ai_rss.data.model.RssItem
+import de.carcophan.ai_rss.data.model.SummaryLevel
 import de.carcophan.ai_rss.data.repository.ArticleWebExtractor
 import de.carcophan.ai_rss.ui.ArticleSummaryState
 import kotlinx.coroutines.launch
@@ -82,9 +85,10 @@ fun ArticleDetailSheet(
     articles: List<RssItem>,
     initialArticle: RssItem,
     summaryStates: Map<String, ArticleSummaryState>,
-    getSummaryState: (articleId: String) -> ArticleSummaryState,
+    getSummaryState: (articleId: String, level: SummaryLevel) -> ArticleSummaryState,
+    defaultSummaryLevel: SummaryLevel = SummaryLevel.DEFAULT,
     geminiModelName: String,
-    onSummarize: (article: RssItem, forceRefresh: Boolean, currentFullText: String) -> Unit,
+    onSummarize: (article: RssItem, forceRefresh: Boolean, currentFullText: String, level: SummaryLevel) -> Unit,
     onOpenGeminiSettings: () -> Unit,
     onDismiss: () -> Unit,
     onArticleChanged: ((RssItem) -> Unit)? = null
@@ -201,7 +205,7 @@ fun ArticleDetailSheet(
                 key = { page -> articles.getOrNull(page)?.id ?: page }
             ) { page ->
                 val article = articles[page]
-                val summaryState = summaryStates[article.id] ?: getSummaryState(article.id)
+                val summaryState = summaryStates[article.id] ?: getSummaryState(article.id, defaultSummaryLevel)
 
                 // Page offset relative to current scroll position for smooth animated transitions
                 val pageOffset = ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction).absoluteValue
@@ -209,9 +213,10 @@ fun ArticleDetailSheet(
                 ArticlePageContent(
                     article = article,
                     summaryState = summaryState,
+                    defaultSummaryLevel = defaultSummaryLevel,
                     geminiModelName = geminiModelName,
-                    onSummarize = { forceRefresh, currentFullText ->
-                        onSummarize(article, forceRefresh, currentFullText)
+                    onSummarize = { forceRefresh, currentFullText, level ->
+                        onSummarize(article, forceRefresh, currentFullText, level)
                     },
                     onOpenGeminiSettings = onOpenGeminiSettings,
                     modifier = Modifier
@@ -244,9 +249,10 @@ fun ArticleDetailSheet(
         articles = listOf(article),
         initialArticle = article,
         summaryStates = mapOf(article.id to summaryState),
-        getSummaryState = { summaryState },
+        getSummaryState = { _, _ -> summaryState },
+        defaultSummaryLevel = summaryState.level,
         geminiModelName = geminiModelName,
-        onSummarize = { _, forceRefresh, currentFullText ->
+        onSummarize = { _, forceRefresh, currentFullText, _ ->
             onSummarize(forceRefresh, currentFullText)
         },
         onOpenGeminiSettings = onOpenGeminiSettings,
@@ -258,8 +264,9 @@ fun ArticleDetailSheet(
 private fun ArticlePageContent(
     article: RssItem,
     summaryState: ArticleSummaryState,
+    defaultSummaryLevel: SummaryLevel,
     geminiModelName: String,
-    onSummarize: (forceRefresh: Boolean, currentFullText: String) -> Unit,
+    onSummarize: (forceRefresh: Boolean, currentFullText: String, level: SummaryLevel) -> Unit,
     onOpenGeminiSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -275,6 +282,13 @@ private fun ArticlePageContent(
     var isLoadingWebText by remember(article.id) { mutableStateOf(false) }
     var webTextLoaded by remember(article.id) { mutableStateOf(false) }
     var isSummaryDismissed by remember(article.id) { mutableStateOf(false) }
+    var selectedLevel by remember(article.id) {
+        mutableStateOf(summaryState.level)
+    }
+
+    LaunchedEffect(summaryState.level) {
+        selectedLevel = summaryState.level
+    }
 
     fun loadWebArticle() {
         if (article.link.isBlank() || isLoadingWebText) return
@@ -371,7 +385,7 @@ private fun ArticlePageContent(
                         onClick = {
                             isSummaryDismissed = false
                             if (summaryState.summary == null) {
-                                onSummarize(false, fullText)
+                                onSummarize(false, fullText, selectedLevel)
                             }
                         },
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
@@ -489,7 +503,39 @@ private fun ArticlePageContent(
                             }
                         }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Summary Level Selector Chips
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SummaryLevel.entries.forEach { level ->
+                                FilterChip(
+                                    selected = (selectedLevel == level),
+                                    onClick = {
+                                        if (selectedLevel != level) {
+                                            selectedLevel = level
+                                            onSummarize(false, fullText, level)
+                                        }
+                                    },
+                                    label = {
+                                        Text(
+                                            text = level.shortLabel,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                    ),
+                                    modifier = Modifier.height(28.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
 
                     when {
                         summaryState.isLoading -> {
@@ -545,7 +591,7 @@ private fun ArticlePageContent(
                                     }
 
                                     IconButton(
-                                        onClick = { onSummarize(true, fullText) },
+                                        onClick = { onSummarize(true, fullText, selectedLevel) },
                                         modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
@@ -595,7 +641,7 @@ private fun ArticlePageContent(
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedButton(
-                                        onClick = { onSummarize(true, fullText) },
+                                        onClick = { onSummarize(true, fullText, selectedLevel) },
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Text("Erneut versuchen")

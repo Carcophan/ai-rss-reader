@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import de.carcophan.ai_rss.data.model.Feed
 import de.carcophan.ai_rss.data.model.Keyword
 import de.carcophan.ai_rss.data.model.RssItem
+import de.carcophan.ai_rss.data.model.SummaryLevel
 import de.carcophan.ai_rss.data.repository.ArticleWebExtractor
 import de.carcophan.ai_rss.data.repository.FeedRepository
 import de.carcophan.ai_rss.data.repository.GeminiRepository
@@ -20,7 +21,8 @@ data class ArticleSummaryState(
     val isLoading: Boolean = false,
     val statusMessage: String? = null,
     val summary: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    val level: SummaryLevel = SummaryLevel.BALANCED
 )
 
 data class DailyBriefingState(
@@ -171,35 +173,38 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    fun getSummaryState(articleId: String): ArticleSummaryState {
+    fun getSummaryState(articleId: String, level: SummaryLevel? = null): ArticleSummaryState {
+        val targetLevel = level ?: geminiRepository.getSummaryLevel()
         val inMemory = _uiState.value.summaryStates[articleId]
-        if (inMemory != null) return inMemory
+        if (inMemory != null && inMemory.level == targetLevel) return inMemory
 
-        val cached = geminiRepository.getCachedSummary(articleId)
+        val cached = geminiRepository.getCachedSummary(articleId, targetLevel)
         return if (cached != null) {
-            ArticleSummaryState(summary = cached)
+            ArticleSummaryState(summary = cached, level = targetLevel)
         } else {
-            ArticleSummaryState()
+            ArticleSummaryState(level = targetLevel)
         }
     }
 
     fun summarizeArticle(
         article: RssItem,
         fullTextOverride: String? = null,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        level: SummaryLevel? = null
     ) {
+        val targetLevel = level ?: geminiRepository.getSummaryLevel()
         if (!geminiRepository.hasApiKey()) {
             updateArticleSummaryState(
                 article.id,
-                ArticleSummaryState(error = "MISSING_API_KEY")
+                ArticleSummaryState(error = "MISSING_API_KEY", level = targetLevel)
             )
             return
         }
 
         if (!forceRefresh) {
-            val cached = geminiRepository.getCachedSummary(article.id)
+            val cached = geminiRepository.getCachedSummary(article.id, targetLevel)
             if (cached != null) {
-                updateArticleSummaryState(article.id, ArticleSummaryState(summary = cached))
+                updateArticleSummaryState(article.id, ArticleSummaryState(summary = cached, level = targetLevel))
                 return
             }
         }
@@ -214,7 +219,8 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
                         article.id,
                         ArticleSummaryState(
                             isLoading = true,
-                            statusMessage = "Lade vollständigen Artikeltext von Webseite..."
+                            statusMessage = "Lade vollständigen Artikeltext von Webseite...",
+                            level = targetLevel
                         )
                     )
                     val extracted = ArticleWebExtractor.extractFullArticle(article.link)
@@ -227,7 +233,7 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
                 if (textToSummarize.isBlank()) {
                     updateArticleSummaryState(
                         article.id,
-                        ArticleSummaryState(error = "Kein Text zum Zusammenfassen verfügbar.")
+                        ArticleSummaryState(error = "Kein Text zum Zusammenfassen verfügbar.", level = targetLevel)
                     )
                     return@launch
                 }
@@ -238,23 +244,26 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
                     article.id,
                     ArticleSummaryState(
                         isLoading = true,
-                        statusMessage = "Gemini ($modelName) analysiert den vollständigen Artikel..."
+                        statusMessage = "Gemini ($modelName) erstellt ${targetLevel.shortLabel}-Zusammenfassung...",
+                        level = targetLevel
                     )
                 )
 
                 val result = geminiRepository.summarizeArticle(
                     title = article.title,
                     fullArticleText = textToSummarize,
-                    sourceName = article.feedTitle
+                    sourceName = article.feedTitle,
+                    level = targetLevel
                 )
 
                 result.onSuccess { summaryText ->
-                    geminiRepository.saveCachedSummary(article.id, summaryText)
+                    geminiRepository.saveCachedSummary(article.id, summaryText, targetLevel)
                     updateArticleSummaryState(
                         article.id,
                         ArticleSummaryState(
                             isLoading = false,
-                            summary = summaryText
+                            summary = summaryText,
+                            level = targetLevel
                         )
                     )
                 }.onFailure { error ->
@@ -262,7 +271,8 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
                         article.id,
                         ArticleSummaryState(
                             isLoading = false,
-                            error = error.localizedMessage ?: "Fehler bei der Zusammenfassung."
+                            error = error.localizedMessage ?: "Fehler bei der Zusammenfassung.",
+                            level = targetLevel
                         )
                     )
                 }
@@ -271,7 +281,8 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
                     article.id,
                     ArticleSummaryState(
                         isLoading = false,
-                        error = e.localizedMessage ?: "Unerwarteter Fehler aufgetreten."
+                        error = e.localizedMessage ?: "Unerwarteter Fehler aufgetreten.",
+                        level = targetLevel
                     )
                 )
             }

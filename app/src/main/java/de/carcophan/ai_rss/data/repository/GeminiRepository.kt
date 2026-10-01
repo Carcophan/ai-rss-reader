@@ -3,6 +3,7 @@ package de.carcophan.ai_rss.data.repository
 import android.content.Context
 import de.carcophan.ai_rss.data.model.KeywordMatch
 import de.carcophan.ai_rss.data.model.RssItem
+import de.carcophan.ai_rss.data.model.SummaryLevel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -20,6 +21,7 @@ class GeminiRepository(private val context: Context) {
     companion object {
         private const val KEY_API_KEY = "gemini_api_key"
         private const val KEY_MODEL = "gemini_model_name"
+        private const val KEY_SUMMARY_LEVEL = "gemini_summary_level"
         private const val PREFS_CACHE = "ai_rss_summary_cache"
 
         const val DEFAULT_MODEL = "gemini-3.8-flash"
@@ -142,12 +144,32 @@ class GeminiRepository(private val context: Context) {
         return getApiKey().isNotBlank()
     }
 
-    fun getCachedSummary(articleId: String): String? {
-        return cachePrefs.getString(articleId, null)
+    fun getSummaryLevel(): SummaryLevel {
+        val id = prefs.getString(KEY_SUMMARY_LEVEL, SummaryLevel.DEFAULT.id)
+        return SummaryLevel.fromId(id)
     }
 
-    fun saveCachedSummary(articleId: String, summary: String) {
-        cachePrefs.edit().putString(articleId, summary).apply()
+    fun setSummaryLevel(level: SummaryLevel) {
+        prefs.edit().putString(KEY_SUMMARY_LEVEL, level.id).apply()
+    }
+
+    fun getCachedSummary(articleId: String, level: SummaryLevel = getSummaryLevel()): String? {
+        val levelKey = "${articleId}_${level.id}"
+        val levelCached = cachePrefs.getString(levelKey, null)
+        if (levelCached != null) return levelCached
+        // Fallback for legacy cache without level suffix (which was BALANCED)
+        if (level == SummaryLevel.BALANCED) {
+            return cachePrefs.getString(articleId, null)
+        }
+        return null
+    }
+
+    fun saveCachedSummary(articleId: String, summary: String, level: SummaryLevel = getSummaryLevel()) {
+        val levelKey = "${articleId}_${level.id}"
+        cachePrefs.edit().putString(levelKey, summary).apply()
+        if (level == SummaryLevel.BALANCED) {
+            cachePrefs.edit().putString(articleId, summary).apply()
+        }
     }
 
     fun getCachedBriefing(key: String): String? {
@@ -229,7 +251,8 @@ class GeminiRepository(private val context: Context) {
     suspend fun summarizeArticle(
         title: String,
         fullArticleText: String,
-        sourceName: String = ""
+        sourceName: String = "",
+        level: SummaryLevel = getSummaryLevel()
     ): Result<String> = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
         if (apiKey.isBlank()) {
@@ -245,23 +268,48 @@ class GeminiRepository(private val context: Context) {
             fullArticleText
         }
 
-        val systemPrompt = """
-            Du bist ein hochqualifizierter journalistischer Assistent. Deine Aufgabe ist es, den vollständigen Text des bereitgestellten Artikels gründlich zu analysieren und eine strukturierte, prägnante Zusammenfassung auf Deutsch zu erstellen.
-            
-            Formatierungsrichtlinien:
-            - Verwende klare Markdown-Abschnitte.
-            - 📌 **Kernbotschaft**: 1 bis 2 prägnante Sätze, die das Wesentliche auf den Punkt bringen.
-            - 🔍 **Wichtigste Punkte**: 3 bis 6 gut lesbare Aufzählungspunkte (Bullet Points) mit den zentralen Fakten, Hintergründen und Entwicklungen.
-            - 💡 **Fazit & Einordnung**: Ein kurzer abschließender Satz zur Bedeutung oder Tragweite des Themas.
-            - Verwende keine unnötigen Floskeln wie "In diesem Artikel geht es um...".
-        """.trimIndent()
+        val systemPrompt = when (level) {
+            SummaryLevel.COMPACT -> """
+                Du bist ein hochqualifizierter journalistischer Assistent. Deine Aufgabe ist es, den Artikel extrem prägnant, auf den Punkt gebracht und schnell erfassbar auf Deutsch zusammenzufassen.
+                
+                Formatierungsrichtlinien:
+                - Verwende sauberes Markdown.
+                - ⚡ **TL;DR**: Maximal 1 bis 2 knappe Sätze, die das Wesentliche sofort verständlich machen.
+                - 📌 **Das Wichtigste in Kürze**: Genau 2 bis 3 kurze, präzise Bullet Points mit den Kernfakten.
+                - Keine Füllwörter, keine langen Erklärungen. Maximal 60-90 Wörter insgesamt.
+            """.trimIndent()
+
+            SummaryLevel.BALANCED -> """
+                Du bist ein hochqualifizierter journalistischer Assistent. Deine Aufgabe ist es, den vollständigen Text des bereitgestellten Artikels gründlich zu analysieren und eine strukturierte, ausgewogene Zusammenfassung auf Deutsch zu erstellen.
+                
+                Formatierungsrichtlinien:
+                - Verwende klare Markdown-Abschnitte.
+                - 📌 **Kernbotschaft**: 1 bis 2 prägnante Sätze, die das Wesentliche auf den Punkt bringen.
+                - 🔍 **Wichtigste Punkte**: 3 bis 5 gut lesbare Aufzählungspunkte (Bullet Points) mit den zentralen Fakten, Hintergründen und Entwicklungen.
+                - 💡 **Fazit & Einordnung**: Ein kurzer abschließender Satz zur Bedeutung oder Tragweite des Themas.
+                - Verwende keine unnötigen Floskeln wie "In diesem Artikel geht es um...".
+            """.trimIndent()
+
+            SummaryLevel.DETAILED -> """
+                Du bist ein hochqualifizierter journalistischer Assistent. Deine Aufgabe ist es, eine tiefgehende, fundierte und strukturierte Detailanalyse des bereitgestellten Artikels auf Deutsch zu verfassen.
+                
+                Formatierungsrichtlinien:
+                - Verwende saubere Markdown-Formatierung mit klaren Abschnitten.
+                - 📌 **Kernbotschaft & Einordnung**: Präzise Zusammenfassung der Gesamtsituation und des Anlasses.
+                - 🔍 **Hintergründe & Ursachen**: Wichtige Kontextinformationen und wie es zu dieser Entwicklung kam.
+                - 📊 **Zentrale Fakten, Positionen & Argumente**: Ausführliche Aufzählungspunkte mit relevanten Details, beteiligten Akteuren, Daten oder Zitaten.
+                - 💡 **Folgen & Ausblick**: Analyse der möglichen Konsequenzen, Tragweite und kommenden Schritte.
+                - Hebe wichtige Kernbegriffe fett hervor. Formuliere journalistisch präzise und differenziert.
+            """.trimIndent()
+        }
 
         val userPrompt = buildString {
             appendLine("Titel: $title")
             if (sourceName.isNotBlank()) appendLine("Quelle: $sourceName")
+            appendLine("Zusammenfassungs-Stufe: ${level.title}")
             appendLine("\nVollständiger Artikeltext:")
             appendLine(contentToSend)
-            appendLine("\nBitte erstelle die strukturierte deutsche Zusammenfassung des vollständigen Artikels.")
+            appendLine("\nBitte erstelle die deutsche Zusammenfassung entsprechend der Vorgaben für die Stufe '${level.title}'.")
         }
 
         try {

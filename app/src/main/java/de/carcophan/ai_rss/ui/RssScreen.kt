@@ -606,13 +606,15 @@ fun RssScreen(
             articles = filteredArticles,
             initialArticle = article,
             summaryStates = uiState.summaryStates,
-            getSummaryState = { articleId -> viewModel.getSummaryState(articleId) },
+            getSummaryState = { articleId, level -> viewModel.getSummaryState(articleId, level) },
+            defaultSummaryLevel = viewModel.geminiRepository.getSummaryLevel(),
             geminiModelName = viewModel.geminiRepository.getModel(),
-            onSummarize = { targetArticle, forceRefresh, currentFullText ->
+            onSummarize = { targetArticle, forceRefresh, currentFullText, level ->
                 viewModel.summarizeArticle(
                     article = targetArticle,
                     fullTextOverride = currentFullText,
-                    forceRefresh = forceRefresh
+                    forceRefresh = forceRefresh,
+                    level = level
                 )
             },
             onOpenGeminiSettings = { showGeminiSettings = true },
