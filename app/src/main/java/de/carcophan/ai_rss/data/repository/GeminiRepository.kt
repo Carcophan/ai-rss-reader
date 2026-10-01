@@ -26,10 +26,7 @@ class GeminiRepository(private val context: Context) {
 
         const val DEFAULT_MODEL = "gemini-3.8-flash"
         val POPULAR_MODELS = listOf(
-            "gemini-3.8-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-2.5-flash"
+            "gemini-3.8-flash"
         )
 
         fun parseKeywordMatchesJson(
@@ -133,7 +130,12 @@ class GeminiRepository(private val context: Context) {
     }
 
     fun getModel(): String {
-        return prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
+        val savedModel = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
+        if (savedModel in listOf("gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash")) {
+            prefs.edit().putString(KEY_MODEL, DEFAULT_MODEL).apply()
+            return DEFAULT_MODEL
+        }
+        return savedModel
     }
 
     fun setModel(model: String) {
@@ -581,7 +583,7 @@ class GeminiRepository(private val context: Context) {
                     }
                 }
                 404 -> {
-                    "Das Modell '$model' wurde nicht gefunden. Versuche z.B. 'gemini-2.0-flash' oder 'gemini-1.5-flash'."
+                    "Das Modell '$model' wurde nicht gefunden. Versuche z.B. 'gemini-3.8-flash'."
                 }
                 429 -> {
                     "Gemini API-Kontingent überschritten (Rate Limit / Quota). Bitte versuche es in Kürze erneut."

@@ -29,7 +29,7 @@ A modern, fast, and intelligent Android RSS reader built entirely with **Jetpack
   - 🔍 **Key Points** (*Wichtigste Punkte*): 3–6 structured bullet points detailing background and facts.
   - 💡 **Conclusion** (*Fazit & Einordnung*): Contextual perspective on the broader impact.
 - **Daily Briefing**: Synthesizes the top 20 recent news items into an executive daily briefing grouped into thematic categories (Politics, Tech, Economy, Science) with source citations and a "Thought of the Day".
-- **Flexible Model Selection**: Supports `gemini-3.8-flash` (default), `gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-2.5-flash`, or any custom Gemini model identifier.
+- **Flexible Model Selection**: Supports `gemini-3.8-flash` (default) or any custom Gemini model identifier.
 - **Offline / Local Caching**: Summaries and daily briefings are cached locally (`SharedPreferences`) to reduce API costs and provide instant reload times.
 - **In-App API Key Setup & Live Test**: Easily configure your Google Gemini API key inside the app with immediate connection testing.
 
@@ -132,7 +132,7 @@ To use the AI-powered summary and Daily Briefing features:
 2. Tap the menu icon (☰) in the top-left corner to open the feed drawer.
 3. Tap **Gemini Einstellungen** (or the AI icon ⚡ / ✨).
 4. Enter your **Gemini API Key** from [Google AI Studio](https://aistudio.google.com/).
-5. (Optional) Choose your preferred model (e.g. `gemini-3.8-flash`, `gemini-2.0-flash`).
+5. (Optional) Choose your preferred model (e.g. `gemini-3.8-flash` or custom model).
 6. Tap **Verbindung testen** to verify that your key is working, then save.
 
 > [!TIP]

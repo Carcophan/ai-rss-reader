@@ -217,10 +217,7 @@ fun GeminiSettingsDialog(
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
                             )
                             val hint = when (modelName) {
-                                "gemini-3.8-flash" -> "Gewünschtes Modell für schnelle, präzise Analysen"
-                                "gemini-2.0-flash" -> "Neuestes Standardmodell (schnell & kostengünstig)"
-                                "gemini-1.5-flash" -> "Bewährtes stabiles Flash-Modell"
-                                "gemini-2.5-flash" -> "Erweiterte Reasoning-Fähigkeiten"
+                                "gemini-3.8-flash" -> "Standardmodell für schnelle, präzise Analysen"
                                 else -> ""
                             }
                             if (hint.isNotBlank()) {
