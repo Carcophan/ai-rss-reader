@@ -110,7 +110,10 @@ de.carcophan.ai_rss
 
 2. Open the project in Android Studio or build via Gradle wrapper:
    ```bash
-   # Build debug APK
+   # Build Release APK (installierbar, kein Debug-Modus)
+   ./gradlew assembleRelease
+
+   # Build Debug APK
    ./gradlew assembleDebug
 
    # Run unit tests
@@ -119,8 +122,19 @@ de.carcophan.ai_rss
 
 3. Install on a connected Android device or emulator (API 37+):
    ```bash
+   # Release-Version direkt per ADB installieren:
+   adb install -r app/build/outputs/apk/release/app-release.apk
+
+   # Oder direkt über Gradle installieren:
+   ./gradlew installRelease
+
+   # (Für Debug-Version:)
    ./gradlew installDebug
    ```
+
+   Die fertige Release-APK-Datei liegt nach dem Build unter:
+   `app/build/outputs/apk/release/app-release.apk`
+   (kann auch direkt auf das Smartphone kopiert und dort installiert werden).
 
 ---
 

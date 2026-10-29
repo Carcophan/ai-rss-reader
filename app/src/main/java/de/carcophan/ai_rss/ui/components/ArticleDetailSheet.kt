@@ -678,13 +678,33 @@ private fun ArticlePageContent(
                         .filter { it.isNotBlank() }
                 }
                 paragraphs.forEach { paragraph ->
-                    Text(
-                        text = paragraph,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.35
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
+                    when {
+                        paragraph.startsWith("### ") -> {
+                            Text(
+                                text = paragraph.removePrefix("### "),
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                            )
+                        }
+                        paragraph.startsWith("## ") -> {
+                            Text(
+                                text = paragraph.removePrefix("## "),
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 16.dp, bottom = 6.dp)
+                            )
+                        }
+                        else -> {
+                            Text(
+                                text = paragraph,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.35
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+                        }
+                    }
                 }
             } else {
                 Text(

@@ -16,12 +16,14 @@ data class ExtractedArticleWeb(
 
 object ArticleWebExtractor {
 
-    private val SCRIPT_STYLE_PATTERN = Pattern.compile("(?is)<(script|style|nav|footer|aside|noscript|svg|button|form)[^>]*>.*?</\\1>")
+    private val SCRIPT_STYLE_PATTERN = Pattern.compile("(?is)<(script|style|nav|footer|aside|noscript|svg|button|form|figure|details)[^>]*>.*?</\\1>")
     private val OG_IMAGE_PATTERN = Pattern.compile("(?i)<meta[^>]+(?:property|name)=[\"'](?:og:image|twitter:image)[\"'][^>]+content=[\"']([^\"']+)[\"']")
     private val OG_IMAGE_PATTERN_ALT = Pattern.compile("(?i)<meta[^>]+content=[\"']([^\"']+)[\"'][^>]+(?:property|name)=[\"'](?:og:image|twitter:image)[\"']")
     private val PARAGRAPH_PATTERN = Pattern.compile("(?is)<p(?:\\s+[^>]*)?>(.*?)</p>")
+    private val CONTENT_TAG_PATTERN = Pattern.compile("(?is)<(h1|h2|h3|p)(?:\\s+[^>]*)?>(.*?)</\\1>")
     private val INTRO_PATTERN = Pattern.compile("(?is)<(?:div|p)[^>]+class=[\"'][^\"']*(?:go-article-header__intro|article-intro|article__intro|intro|lead)[^\"']*[\"'][^>]*>(.*?)</(?:div|p)>")
-    private val ARTICLE_TAG_PATTERN = Pattern.compile("(?is)<article[^>]*>(.*?)</article>")
+    private val INNER_ARTICLE_PATTERN = Pattern.compile("(?is)<article\\b[^>]*>.*?</article>")
+    private val TEASER_BLOCK_PATTERN = Pattern.compile("(?is)<div[^>]+class=[\"'][^\"']*(?:go-teaser|teaser-block|ad-slot|go-tag-list)[^\"']*[\"'][^>]*>.*?</div>")
     private val HTML_TAG_PATTERN = Pattern.compile("<[^>]*>")
 
     private const val GOLEM_DEFAULT_COOKIE = "golem_consent20=cmp|250101; golem_consent20=simple|250101; golem_consent=simple"
@@ -43,50 +45,44 @@ object ArticleWebExtractor {
                 val originalArticleUrl = extractOriginalUrlFromConsent(finalUrl, html) ?: targetUrl
 
                 val retryCookie = extractedCookie ?: GOLEM_DEFAULT_COOKIE
+                cookie = retryCookie
                 val retryResult = fetchHtml(originalArticleUrl, retryCookie)
                 if (retryResult != null && !retryResult.first.contains("auswahl.html")) {
+                    finalUrl = retryResult.first
                     html = retryResult.second
                 }
             }
 
-            // Extract OG image
-            var ogImage: String? = null
-            var matcher = OG_IMAGE_PATTERN.matcher(html)
-            if (matcher.find()) {
-                ogImage = matcher.group(1)
+            val ogImage = extractOgImage(html)
+            val isGolem = finalUrl.contains("golem.de", ignoreCase = true)
+            val allPages = if (isGolem) {
+                extractGolemPageUrls(finalUrl, html)
             } else {
-                matcher = OG_IMAGE_PATTERN_ALT.matcher(html)
-                if (matcher.find()) {
-                    ogImage = matcher.group(1)
-                }
+                emptyList()
             }
-
-            // Remove scripts, styles, navs, svgs, buttons
-            val sanitized = SCRIPT_STYLE_PATTERN.matcher(html).replaceAll("")
-
-            // Find all <article> tags and choose the one with the most content (avoids teaser/ad articles)
-            val targetHtml = selectBestArticleSection(sanitized)
 
             val paragraphs = mutableListOf<String>()
 
-            // Extract lead/intro paragraph if present
-            val introMatcher = INTRO_PATTERN.matcher(targetHtml)
-            if (introMatcher.find()) {
-                val introContent = cleanHtmlSnippet(introMatcher.group(1) ?: "")
-                if (introContent.length > 25 && !isBoilerplate(introContent)) {
-                    paragraphs.add(introContent)
-                }
-            }
+            if (allPages.size > 1) {
+                for ((index, pageUrl) in allPages.take(10).withIndex()) {
+                    val pageHtml = if (pageUrl == finalUrl) {
+                        html
+                    } else {
+                        fetchHtml(pageUrl, cookie)?.second
+                    } ?: continue
 
-            // Extract standard paragraphs
-            val pMatcher = PARAGRAPH_PATTERN.matcher(targetHtml)
-            while (pMatcher.find()) {
-                val pContent = pMatcher.group(1) ?: ""
-                val clean = cleanHtmlSnippet(pContent)
-                // Filter out duplicates (e.g. if intro was also in <p>), short fragments, or boilerplate
-                if (clean.length > 25 && !isBoilerplate(clean) && !paragraphs.contains(clean)) {
-                    paragraphs.add(clean)
+                    extractContentElements(
+                        html = pageHtml,
+                        isFirstPage = (index == 0),
+                        into = paragraphs
+                    )
                 }
+            } else {
+                extractContentElements(
+                    html = html,
+                    isFirstPage = true,
+                    into = paragraphs
+                )
             }
 
             val fullText = if (paragraphs.isNotEmpty()) {
@@ -102,6 +98,108 @@ object ArticleWebExtractor {
             }
         } catch (_: Exception) {
             null
+        }
+    }
+
+    private fun extractOgImage(html: String): String? {
+        var matcher = OG_IMAGE_PATTERN.matcher(html)
+        if (matcher.find()) {
+            return matcher.group(1)
+        }
+        matcher = OG_IMAGE_PATTERN_ALT.matcher(html)
+        if (matcher.find()) {
+            return matcher.group(1)
+        }
+        return null
+    }
+
+    private fun extractContentElements(
+        html: String,
+        isFirstPage: Boolean,
+        into: MutableList<String>
+    ) {
+        val sanitized = SCRIPT_STYLE_PATTERN.matcher(html).replaceAll("")
+        val section = selectBestArticleSection(sanitized)
+
+        // Strip embedded teasers, ads and related course blocks
+        val cleaned = section
+            .let { INNER_ARTICLE_PATTERN.matcher(it).replaceAll("") }
+            .let { TEASER_BLOCK_PATTERN.matcher(it).replaceAll("") }
+
+        // Extract lead/intro paragraph if present on first page
+        if (isFirstPage) {
+            val introMatcher = INTRO_PATTERN.matcher(cleaned)
+            if (introMatcher.find()) {
+                val introContent = cleanHtmlSnippet(introMatcher.group(1) ?: "")
+                if (introContent.length > 25 && !isBoilerplate(introContent) && !into.contains(introContent)) {
+                    into.add(introContent)
+                }
+            }
+        }
+
+        // Extract headings and paragraphs in order
+        val contentMatcher = CONTENT_TAG_PATTERN.matcher(cleaned)
+        while (contentMatcher.find()) {
+            val tag = (contentMatcher.group(1) ?: "").lowercase()
+            val raw = contentMatcher.group(2) ?: ""
+            val clean = cleanHtmlSnippet(raw)
+
+            if (clean.length < 4 || isBoilerplate(clean)) continue
+
+            val formatted = when (tag) {
+                "h1" -> if (!isFirstPage) "## $clean" else null
+                "h2" -> "## $clean"
+                "h3" -> "### $clean"
+                "p" -> if (clean.length >= 20) clean else null
+                else -> null
+            } ?: continue
+
+            if (!into.contains(formatted) && !into.contains(clean)) {
+                into.add(formatted)
+            }
+        }
+    }
+
+    private fun extractGolemPageUrls(currentUrl: String, html: String): List<String> {
+        val pageUrls = mutableListOf<String>()
+
+        // 1. Check for <ol class="go-index__list"> or links with class="go-index-link"
+        val indexLinkMatcher = Pattern.compile("(?i)(?:class=[\"'][^\"']*go-index-link[^\"']*[\"'][^>]*href=[\"']([^\"']+)[\"']|href=[\"']([^\"']+)[\"'][^>]*class=[\"'][^\"']*go-index-link[^\"']*[\"'])")
+        val indexMatcher = indexLinkMatcher.matcher(html)
+        while (indexMatcher.find()) {
+            val href = indexMatcher.group(1) ?: indexMatcher.group(2) ?: continue
+            val fullUrl = resolveUrl(currentUrl, href)
+            if (fullUrl.startsWith("http") && !pageUrls.contains(fullUrl)) {
+                pageUrls.add(fullUrl)
+            }
+        }
+
+        if (pageUrls.isNotEmpty()) {
+            return pageUrls
+        }
+
+        // 2. Fallback: check <nav class="go-pagination...">
+        val navMatcher = Pattern.compile("(?is)<nav[^>]+class=[\"'][^\"']*go-pagination[^\"']*[\"'][^>]*>(.*?)</nav>").matcher(html)
+        if (navMatcher.find()) {
+            val navContent = navMatcher.group(1) ?: ""
+            val hrefMatcher = Pattern.compile("(?i)href=[\"']([^\"']+)[\"']").matcher(navContent)
+            while (hrefMatcher.find()) {
+                val href = hrefMatcher.group(1) ?: continue
+                val fullUrl = resolveUrl(currentUrl, href)
+                if (fullUrl.startsWith("http") && !pageUrls.contains(fullUrl)) {
+                    pageUrls.add(fullUrl)
+                }
+            }
+        }
+
+        return pageUrls
+    }
+
+    private fun resolveUrl(baseUrl: String, relativeUrl: String): String {
+        return try {
+            URL(URL(baseUrl), relativeUrl).toString()
+        } catch (_: Exception) {
+            relativeUrl
         }
     }
 
@@ -138,24 +236,123 @@ object ArticleWebExtractor {
     }
 
     private fun selectBestArticleSection(sanitizedHtml: String): String {
-        val articleMatcher = ARTICLE_TAG_PATTERN.matcher(sanitizedHtml)
-        var bestSection: String? = null
-        var maxParagraphCount = 0
+        // Priority 1: Check for explicit article container with class "go-article" (Golem)
+        val golemArticle = extractTagWithClass(sanitizedHtml, "article", "go-article")
+        if (golemArticle != null && countParagraphs(golemArticle) > 0) {
+            return golemArticle
+        }
 
-        while (articleMatcher.find()) {
-            val section = articleMatcher.group(1) ?: continue
-            val pCount = countParagraphs(section)
-            if (pCount > maxParagraphCount) {
-                maxParagraphCount = pCount
-                bestSection = section
+        // Priority 2: Check top-level <article> tags using depth matching
+        val topArticles = extractTopLevelTags(sanitizedHtml, "article")
+        var bestArticle: String? = null
+        var maxPCount = 0
+        for (art in topArticles) {
+            val pCount = countParagraphs(art)
+            if (pCount > maxPCount) {
+                maxPCount = pCount
+                bestArticle = art
+            }
+        }
+        if (bestArticle != null && maxPCount > 0) {
+            return bestArticle
+        }
+
+        // Priority 3: Check <main> tags
+        val mainTags = extractTopLevelTags(sanitizedHtml, "main")
+        for (m in mainTags) {
+            val pCount = countParagraphs(m)
+            if (pCount > maxPCount) {
+                maxPCount = pCount
+                bestArticle = m
+            }
+        }
+        if (bestArticle != null && maxPCount > 0) {
+            return bestArticle
+        }
+
+        return sanitizedHtml
+    }
+
+    private fun extractTopLevelTags(html: String, tagName: String): List<String> {
+        val results = mutableListOf<String>()
+        val openPattern = Pattern.compile("(?i)<$tagName\\b[^>]*>")
+        val closeTag = "</$tagName>"
+        val matcher = openPattern.matcher(html)
+        var searchPos = 0
+
+        while (matcher.find(searchPos)) {
+            val openTagEnd = matcher.end()
+            var depth = 1
+            var curr = openTagEnd
+
+            while (curr < html.length && depth > 0) {
+                val nextOpen = indexOfTag(html, "<$tagName", curr)
+                val nextClose = html.indexOf(closeTag, curr, ignoreCase = true)
+                if (nextClose == -1) break
+                if (nextOpen != -1 && nextOpen < nextClose) {
+                    depth++
+                    curr = nextOpen + tagName.length + 1
+                } else {
+                    depth--
+                    curr = nextClose + closeTag.length
+                }
+            }
+
+            if (depth == 0) {
+                val innerContent = html.substring(openTagEnd, curr - closeTag.length)
+                results.add(innerContent)
+                searchPos = curr
+            } else {
+                searchPos = openTagEnd
+            }
+        }
+        return results
+    }
+
+    private fun extractTagWithClass(html: String, tagName: String, className: String): String? {
+        val pattern = Pattern.compile("(?i)<$tagName\\b[^>]*class=[\"'][^\"']*$className[^\"']*[\"'][^>]*>")
+        val matcher = pattern.matcher(html)
+        if (!matcher.find()) return null
+
+        val openTagEnd = matcher.end()
+        var depth = 1
+        var curr = openTagEnd
+        val closeTag = "</$tagName>"
+
+        while (curr < html.length && depth > 0) {
+            val nextOpen = indexOfTag(html, "<$tagName", curr)
+            val nextClose = html.indexOf(closeTag, curr, ignoreCase = true)
+            if (nextClose == -1) break
+            if (nextOpen != -1 && nextOpen < nextClose) {
+                depth++
+                curr = nextOpen + tagName.length + 1
+            } else {
+                depth--
+                curr = nextClose + closeTag.length
             }
         }
 
-        return if (bestSection != null && maxParagraphCount > 0) {
-            bestSection
+        return if (depth == 0) {
+            html.substring(openTagEnd, curr - closeTag.length)
         } else {
-            sanitizedHtml
+            null
         }
+    }
+
+    private fun indexOfTag(html: String, prefix: String, fromIndex: Int): Int {
+        var idx = fromIndex
+        val len = html.length
+        val prefixLen = prefix.length
+        while (idx < len) {
+            val found = html.indexOf(prefix, idx, ignoreCase = true)
+            if (found == -1) return -1
+            val after = found + prefixLen
+            if (after >= len || html[after] == ' ' || html[after] == '>' || html[after] == '\t' || html[after] == '\n' || html[after] == '\r') {
+                return found
+            }
+            idx = found + 1
+        }
+        return -1
     }
 
     private fun countParagraphs(html: String): Int {
@@ -241,6 +438,10 @@ object ArticleWebExtractor {
                 lower.contains("golem pur") ||
                 lower.contains("cookies zustimmen") ||
                 lower.contains("zustimmungs-dialog") ||
-                lower.contains("artikel merken")
+                lower.contains("artikel merken") ||
+                lower.contains("relevante themen") ||
+                lower.contains("passend zum thema") ||
+                lower.contains("mehr zum thema") ||
+                lower.contains("quellenangabe")
     }
 }
