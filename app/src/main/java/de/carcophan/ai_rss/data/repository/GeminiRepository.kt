@@ -389,8 +389,7 @@ class GeminiRepository(private val context: Context) {
     suspend fun classifyArticlesByKeyword(
         keyword: String,
         articles: List<RssItem>,
-        forceRefresh: Boolean = false,
-        onProgress: ((completed: Int, total: Int) -> Unit)? = null
+        forceRefresh: Boolean = false
     ): Result<List<KeywordMatch>> = withContext(Dispatchers.IO) {
         val cleanKeyword = keyword.trim()
         if (cleanKeyword.isBlank()) {
@@ -447,54 +446,44 @@ class GeminiRepository(private val context: Context) {
             [
               {
                 "index": 1,
-                "reason": "1 kurzer prägnanter Satz auf Deutsch, warum dieser Artikel zum Thema passt",
+                "reason": "Kurze Begründung auf Deutsch (maximal 10 Wörter)",
                 "relevanceScore": 8
               }
             ]
             Falls kein Artikel zum Schlagwort passt, antworte mit: []
         """.trimIndent()
 
-        val newlyClassifiedMatches = mutableListOf<KeywordMatch>()
-        val chunks = articlesToClassify.chunked(50)
-        var processedCount = 0
+        val userPrompt = buildString {
+            appendLine("Gesuchtes Schlagwort: \"$cleanKeyword\"")
+            appendLine("Anzahl der Artikel: ${articlesToClassify.size}")
+            appendLine("\nArtikelliste:\n")
+            articlesToClassify.forEachIndexed { index, item ->
+                val num = index + 1
+                appendLine("[$num] [${item.feedTitle}] ${item.title}")
+                val desc = (item.description.ifBlank { item.content }).replace("\r", " ").replace("\n", " ").trim()
+                if (desc.isNotBlank()) {
+                    // Full RSS description (with high safety threshold for rare feeds embedding giant blobs)
+                    val safeDesc = if (desc.length > 5000) desc.take(5000) + "..." else desc
+                    appendLine("Beschreibung: $safeDesc")
+                }
+                appendLine()
+            }
+            appendLine("Bewerte alle Artikel anhand von Titel und Beschreibung und gib das JSON-Array der relevanten Treffer zurück.")
+        }
 
         try {
-            for (chunk in chunks) {
-                val userPrompt = buildString {
-                    appendLine("Gesuchtes Schlagwort: \"$cleanKeyword\"")
-                    appendLine("Anzahl der Artikel in dieser Liste: ${chunk.size}")
-                    appendLine("\nArtikelliste:\n")
-                    chunk.forEachIndexed { index, item ->
-                        val num = index + 1
-                        appendLine("[$num] [${item.feedTitle}] ${item.title}")
-                        val desc = (item.description.ifBlank { item.content }).replace("\r", " ").replace("\n", " ").trim()
-                        if (desc.isNotBlank()) {
-                            // Full RSS description (with high safety threshold for rare feeds embedding giant blobs)
-                            val safeDesc = if (desc.length > 5000) desc.take(5000) + "..." else desc
-                            appendLine("Beschreibung: $safeDesc")
-                        }
-                        appendLine()
-                    }
-                    appendLine("Bewerte die Artikel anhand von Titel und Beschreibung und gib das JSON-Array der relevanten Treffer zurück.")
-                }
+            val response = executeGeminiRequest(apiKey, model, systemPrompt, userPrompt, maxOutputTokens = 8192)
+            val parsedMatches = parseKeywordMatchesJson(response, articlesToClassify)
+            val relevantById = parsedMatches.filter { it.isRelevant }.associateBy { it.articleId }
 
-                val response = executeGeminiRequest(apiKey, model, systemPrompt, userPrompt)
-                val parsedMatches = parseKeywordMatchesJson(response, chunk)
-                val relevantById = parsedMatches.filter { it.isRelevant }.associateBy { it.articleId }
-
-                // Map every item in the chunk so non-matching items are recorded as isRelevant = false
-                chunk.forEach { article ->
-                    val match = relevantById[article.id] ?: KeywordMatch(
-                        articleId = article.id,
-                        isRelevant = false,
-                        reason = "",
-                        relevanceScore = 0
-                    )
-                    newlyClassifiedMatches.add(match)
-                }
-
-                processedCount += chunk.size
-                onProgress?.invoke(processedCount, articlesToClassify.size)
+            // Map every item so non-matching items are recorded as isRelevant = false
+            val newlyClassifiedMatches = articlesToClassify.map { article ->
+                relevantById[article.id] ?: KeywordMatch(
+                    articleId = article.id,
+                    isRelevant = false,
+                    reason = "",
+                    relevanceScore = 0
+                )
             }
 
             // Cache newly classified matches
@@ -516,7 +505,8 @@ class GeminiRepository(private val context: Context) {
         apiKey: String,
         model: String,
         systemInstruction: String?,
-        userPrompt: String
+        userPrompt: String,
+        maxOutputTokens: Int = 4096
     ): String {
         val cleanModel = model.trim().removePrefix("models/")
         val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent?key=$apiKey"
@@ -544,7 +534,7 @@ class GeminiRepository(private val context: Context) {
             // Generation config
             val genConfig = JSONObject().apply {
                 put("temperature", 0.2)
-                put("maxOutputTokens", 4096)
+                put("maxOutputTokens", maxOutputTokens)
             }
             put("generationConfig", genConfig)
         }

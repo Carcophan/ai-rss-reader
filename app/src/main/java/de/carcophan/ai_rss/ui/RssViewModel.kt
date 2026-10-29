@@ -533,17 +533,7 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
             keyword = keyword.text,
             articles = articles,
             forceRefresh = forceRefresh
-        ) { completed, total ->
-            _uiState.update { state ->
-                val current = state.keywordFilterState ?: KeywordFilterState(activeKeyword = keyword)
-                state.copy(
-                    keywordFilterState = current.copy(
-                        isLoading = true,
-                        statusMessage = "Gemini ($modelName) analysiert Meldungen ($completed von $total) für \"${keyword.text}\"..."
-                    )
-                )
-            }
-        }
+        )
         result.onSuccess { matches ->
             val relevantMatches = matches.filter { it.isRelevant }
             val matchedIds = relevantMatches.map { it.articleId }.toSet()
