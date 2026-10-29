@@ -53,7 +53,8 @@ data class RssUiState(
     val summaryStates: Map<String, ArticleSummaryState> = emptyMap(),
     val dailyBriefingState: DailyBriefingState = DailyBriefingState(),
     val keywords: List<Keyword> = emptyList(),
-    val keywordFilterState: KeywordFilterState = KeywordFilterState()
+    val keywordFilterState: KeywordFilterState = KeywordFilterState(),
+    val articleFontSize: Int = 16
 )
 
 class RssViewModel(application: Application) : AndroidViewModel(application) {
@@ -62,12 +63,20 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     val geminiRepository = GeminiRepository(application.applicationContext)
     val keywordRepository = KeywordRepository(application.applicationContext)
 
-    private val _uiState = MutableStateFlow(RssUiState())
+    private val _uiState = MutableStateFlow(
+        RssUiState(articleFontSize = repository.getArticleFontSize())
+    )
     val uiState: StateFlow<RssUiState> = _uiState.asStateFlow()
 
     init {
         loadFeedsAndArticles()
         loadKeywords()
+    }
+
+    fun setArticleFontSize(sizeSp: Int) {
+        val clamped = sizeSp.coerceIn(12, 28)
+        _uiState.update { it.copy(articleFontSize = clamped) }
+        repository.saveArticleFontSize(clamped)
     }
 
     fun loadFeedsAndArticles() {

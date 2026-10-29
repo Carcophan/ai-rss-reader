@@ -609,6 +609,8 @@ fun RssScreen(
             getSummaryState = { articleId, level -> viewModel.getSummaryState(articleId, level) },
             defaultSummaryLevel = viewModel.geminiRepository.getSummaryLevel(),
             geminiModelName = viewModel.geminiRepository.getModel(),
+            articleFontSize = uiState.articleFontSize,
+            onFontSizeChange = { viewModel.setArticleFontSize(it) },
             onSummarize = { targetArticle, forceRefresh, currentFullText, level ->
                 viewModel.summarizeArticle(
                     article = targetArticle,

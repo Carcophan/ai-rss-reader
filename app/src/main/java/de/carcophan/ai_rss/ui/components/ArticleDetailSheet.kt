@@ -9,6 +9,10 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,10 +37,14 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.TextDecrease
+import androidx.compose.material.icons.filled.TextIncrease
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -53,6 +61,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -71,6 +80,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import de.carcophan.ai_rss.data.model.RssItem
 import de.carcophan.ai_rss.data.model.SummaryLevel
@@ -78,6 +88,11 @@ import de.carcophan.ai_rss.data.repository.ArticleWebExtractor
 import de.carcophan.ai_rss.ui.ArticleSummaryState
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
+import kotlin.math.roundToInt
+
+private const val MIN_FONT_SIZE_SP = 12
+private const val MAX_FONT_SIZE_SP = 28
+private const val DEFAULT_FONT_SIZE_SP = 16
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,6 +103,8 @@ fun ArticleDetailSheet(
     getSummaryState: (articleId: String, level: SummaryLevel) -> ArticleSummaryState,
     defaultSummaryLevel: SummaryLevel = SummaryLevel.DEFAULT,
     geminiModelName: String,
+    articleFontSize: Int = DEFAULT_FONT_SIZE_SP,
+    onFontSizeChange: (Int) -> Unit = {},
     onSummarize: (article: RssItem, forceRefresh: Boolean, currentFullText: String, level: SummaryLevel) -> Unit,
     onOpenGeminiSettings: () -> Unit,
     onDismiss: () -> Unit,
@@ -97,6 +114,15 @@ fun ArticleDetailSheet(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+
+    var showFontSizeControls by remember { mutableStateOf(false) }
+    var currentFontSize by remember(articleFontSize) { mutableStateOf(articleFontSize) }
+
+    fun updateFontSize(newSize: Int) {
+        val clamped = newSize.coerceIn(MIN_FONT_SIZE_SP, MAX_FONT_SIZE_SP)
+        currentFontSize = clamped
+        onFontSizeChange(clamped)
+    }
 
     val initialIndex = remember(initialArticle.id) {
         val idx = articles.indexOfFirst { it.id == initialArticle.id }
@@ -124,7 +150,7 @@ fun ArticleDetailSheet(
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
-            // Header: Navigation controls (arrows & counter) + Close button
+            // Header: Navigation controls (arrows & counter) + Actions (Font size & Close)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -190,8 +216,140 @@ fun ArticleDetailSheet(
                     Spacer(modifier = Modifier.width(1.dp))
                 }
 
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Schließen")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    IconButton(
+                        onClick = { showFontSizeControls = !showFontSizeControls },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FormatSize,
+                            contentDescription = "Schriftgröße anpassen",
+                            tint = if (showFontSizeControls || currentFontSize != DEFAULT_FONT_SIZE_SP) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Schließen",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            // Expandable Font Size Adjustment Panel
+            AnimatedVisibility(
+                visible = showFontSizeControls,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    tonalElevation = 2.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Schriftgröße",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = "${currentFontSize} sp",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+
+                                if (currentFontSize != DEFAULT_FONT_SIZE_SP) {
+                                    AssistChip(
+                                        onClick = { updateFontSize(DEFAULT_FONT_SIZE_SP) },
+                                        label = { Text("Standard") },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.RestartAlt,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        },
+                                        modifier = Modifier.height(28.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = { updateFontSize(currentFontSize - 2) },
+                                enabled = currentFontSize > MIN_FONT_SIZE_SP,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.TextDecrease,
+                                    contentDescription = "Schrift verkleinern",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            Slider(
+                                value = currentFontSize.toFloat(),
+                                onValueChange = { updateFontSize(it.roundToInt()) },
+                                valueRange = MIN_FONT_SIZE_SP.toFloat()..MAX_FONT_SIZE_SP.toFloat(),
+                                steps = ((MAX_FONT_SIZE_SP - MIN_FONT_SIZE_SP) / 2) - 1,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp)
+                            )
+
+                            IconButton(
+                                onClick = { updateFontSize(currentFontSize + 2) },
+                                enabled = currentFontSize < MAX_FONT_SIZE_SP,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.TextIncrease,
+                                    contentDescription = "Schrift vergrößern",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -215,6 +373,8 @@ fun ArticleDetailSheet(
                     summaryState = summaryState,
                     defaultSummaryLevel = defaultSummaryLevel,
                     geminiModelName = geminiModelName,
+                    fontSizeSp = currentFontSize,
+                    onFontSizeChange = { updateFontSize(it) },
                     onSummarize = { forceRefresh, currentFullText, level ->
                         onSummarize(article, forceRefresh, currentFullText, level)
                     },
@@ -241,6 +401,8 @@ fun ArticleDetailSheet(
     article: RssItem,
     summaryState: ArticleSummaryState,
     geminiModelName: String,
+    articleFontSize: Int = DEFAULT_FONT_SIZE_SP,
+    onFontSizeChange: (Int) -> Unit = {},
     onSummarize: (forceRefresh: Boolean, currentFullText: String) -> Unit,
     onOpenGeminiSettings: () -> Unit,
     onDismiss: () -> Unit
@@ -252,6 +414,8 @@ fun ArticleDetailSheet(
         getSummaryState = { _, _ -> summaryState },
         defaultSummaryLevel = summaryState.level,
         geminiModelName = geminiModelName,
+        articleFontSize = articleFontSize,
+        onFontSizeChange = onFontSizeChange,
         onSummarize = { _, forceRefresh, currentFullText, _ ->
             onSummarize(forceRefresh, currentFullText)
         },
@@ -266,12 +430,15 @@ private fun ArticlePageContent(
     summaryState: ArticleSummaryState,
     defaultSummaryLevel: SummaryLevel,
     geminiModelName: String,
+    fontSizeSp: Int = DEFAULT_FONT_SIZE_SP,
+    onFontSizeChange: (Int) -> Unit = {},
     onSummarize: (forceRefresh: Boolean, currentFullText: String, level: SummaryLevel) -> Unit,
     onOpenGeminiSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val fontScale = fontSizeSp.toFloat() / DEFAULT_FONT_SIZE_SP.toFloat()
 
     var fullText by remember(article.id) {
         mutableStateOf(article.content.ifBlank { article.description })
@@ -351,7 +518,11 @@ private fun ArticlePageContent(
             // Article Title
             Text(
                 text = article.title,
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = (MaterialTheme.typography.headlineSmall.fontSize.value * fontScale).coerceIn(18f, 32f).sp,
+                    lineHeight = (MaterialTheme.typography.headlineSmall.lineHeight.value * fontScale).coerceIn(24f, 40f).sp
+                ),
                 color = MaterialTheme.colorScheme.onSurface
             )
 
@@ -564,7 +735,8 @@ private fun ArticlePageContent(
                             Column {
                                 MarkdownText(
                                     markdown = summaryState.summary,
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth(),
+                                    fontScale = fontScale
                                 )
 
                                 Spacer(modifier = Modifier.height(12.dp))
@@ -661,12 +833,59 @@ private fun ArticlePageContent(
             HorizontalDivider()
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Section Header: Full Article Text
-            Text(
-                text = "Vollständiger Artikeltext",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            // Section Header: Full Article Text with quick font size controls
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Vollständiger Artikeltext",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    IconButton(
+                        onClick = { onFontSizeChange(fontSizeSp - 2) },
+                        enabled = fontSizeSp > MIN_FONT_SIZE_SP,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.TextDecrease,
+                            contentDescription = "Schriftgröße verkleinern",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = "${fontSizeSp}sp",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { onFontSizeChange(fontSizeSp + 2) },
+                        enabled = fontSizeSp < MAX_FONT_SIZE_SP,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.TextIncrease,
+                            contentDescription = "Schriftgröße vergrößern",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -682,7 +901,11 @@ private fun ArticlePageContent(
                         paragraph.startsWith("### ") -> {
                             Text(
                                 text = paragraph.removePrefix("### "),
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = (fontSizeSp * 1.15f).sp,
+                                    lineHeight = (fontSizeSp * 1.55f).sp
+                                ),
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
                             )
@@ -690,7 +913,11 @@ private fun ArticlePageContent(
                         paragraph.startsWith("## ") -> {
                             Text(
                                 text = paragraph.removePrefix("## "),
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = (fontSizeSp * 1.35f).sp,
+                                    lineHeight = (fontSizeSp * 1.75f).sp
+                                ),
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(top = 16.dp, bottom = 6.dp)
                             )
@@ -698,9 +925,11 @@ private fun ArticlePageContent(
                         else -> {
                             Text(
                                 text = paragraph,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.35
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = fontSizeSp.sp,
+                                    lineHeight = (fontSizeSp * 1.55f).sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.height(14.dp))
                         }
@@ -709,7 +938,10 @@ private fun ArticlePageContent(
             } else {
                 Text(
                     text = "Kein Vorschautext verfügbar. Öffne den vollständigen Artikel im Browser.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = (fontSizeSp * 0.9f).sp,
+                        lineHeight = (fontSizeSp * 1.4f).sp
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

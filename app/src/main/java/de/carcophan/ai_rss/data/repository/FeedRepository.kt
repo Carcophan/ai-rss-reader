@@ -19,6 +19,16 @@ class FeedRepository(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("ai_rss_prefs", Context.MODE_PRIVATE)
     private val FEEDS_KEY = "saved_feeds"
+    private val KEY_ARTICLE_FONT_SIZE = "article_font_size"
+    private val DEFAULT_ARTICLE_FONT_SIZE = 16
+
+    fun getArticleFontSize(): Int {
+        return prefs.getInt(KEY_ARTICLE_FONT_SIZE, DEFAULT_ARTICLE_FONT_SIZE)
+    }
+
+    fun saveArticleFontSize(sizeSp: Int) {
+        prefs.edit().putInt(KEY_ARTICLE_FONT_SIZE, sizeSp).apply()
+    }
 
     companion object {
         val SUGGESTIONS = listOf(

@@ -35,7 +35,8 @@ import java.util.regex.Pattern
 fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
-    textColor: Color = MaterialTheme.colorScheme.onSurface
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+    fontScale: Float = 1f
 ) {
     val codeBackgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -55,7 +56,7 @@ fun MarkdownText(
             if (trimmed.startsWith("```")) {
                 if (inCodeBlock) {
                     // End of code block
-                    CodeBlockCard(code = codeBlockLines.joinToString("\n"))
+                    CodeBlockCard(code = codeBlockLines.joinToString("\n"), fontScale = fontScale)
                     codeBlockLines.clear()
                     inCodeBlock = false
                 } else {
@@ -88,9 +89,21 @@ fun MarkdownText(
                 val annotatedHeading = parseInlineMarkdown(headingContent, codeBackgroundColor)
 
                 val headingStyle = when (headingLevel) {
-                    1 -> MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                    2 -> MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    else -> MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                    1 -> MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = MaterialTheme.typography.titleLarge.fontSize * fontScale,
+                        lineHeight = MaterialTheme.typography.titleLarge.lineHeight * fontScale
+                    )
+                    2 -> MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = MaterialTheme.typography.titleMedium.fontSize * fontScale,
+                        lineHeight = MaterialTheme.typography.titleMedium.lineHeight * fontScale
+                    )
+                    else -> MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = MaterialTheme.typography.titleSmall.fontSize * fontScale,
+                        lineHeight = MaterialTheme.typography.titleSmall.lineHeight * fontScale
+                    )
                 }
 
                 Text(
@@ -122,9 +135,12 @@ fun MarkdownText(
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = annotatedQuote,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                        color = textColor.copy(alpha = 0.85f),
-                        lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.3
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontStyle = FontStyle.Italic,
+                            fontSize = MaterialTheme.typography.bodyMedium.fontSize * fontScale,
+                            lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.3f * fontScale
+                        ),
+                        color = textColor.copy(alpha = 0.85f)
                     )
                 }
                 return@forEachIndexed
@@ -148,15 +164,20 @@ fun MarkdownText(
                 ) {
                     Text(
                         text = "•",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = MaterialTheme.typography.bodyMedium.fontSize * fontScale
+                        ),
                         color = primaryColor,
                         modifier = Modifier.padding(start = 4.dp, end = 8.dp)
                     )
                     Text(
                         text = annotatedBullet,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = MaterialTheme.typography.bodyMedium.fontSize * fontScale,
+                            lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.3f * fontScale
+                        ),
                         color = textColor,
-                        lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.3,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -178,17 +199,22 @@ fun MarkdownText(
                 ) {
                     Text(
                         text = "$number.",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = MaterialTheme.typography.bodyMedium.fontSize * fontScale
+                        ),
                         color = primaryColor,
                         modifier = Modifier
-                            .width(24.dp)
+                            .width((24 * fontScale).dp.coerceAtLeast(24.dp))
                             .padding(end = 4.dp)
                     )
                     Text(
                         text = annotatedItem,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = MaterialTheme.typography.bodyMedium.fontSize * fontScale,
+                            lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.3f * fontScale
+                        ),
                         color = textColor,
-                        lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.3,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -199,22 +225,24 @@ fun MarkdownText(
             val annotatedParagraph = parseInlineMarkdown(trimmed, codeBackgroundColor)
             Text(
                 text = annotatedParagraph,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = MaterialTheme.typography.bodyMedium.fontSize * fontScale,
+                    lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.35f * fontScale
+                ),
                 color = textColor,
-                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.35,
                 modifier = Modifier.padding(vertical = 2.dp)
             )
         }
 
         // Catch unclosed code block if present
         if (inCodeBlock && codeBlockLines.isNotEmpty()) {
-            CodeBlockCard(code = codeBlockLines.joinToString("\n"))
+            CodeBlockCard(code = codeBlockLines.joinToString("\n"), fontScale = fontScale)
         }
     }
 }
 
 @Composable
-private fun CodeBlockCard(code: String) {
+private fun CodeBlockCard(code: String, fontScale: Float = 1f) {
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -226,7 +254,8 @@ private fun CodeBlockCard(code: String) {
             text = code,
             style = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp
+                fontSize = (12 * fontScale).sp,
+                lineHeight = (16 * fontScale).sp
             ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(12.dp)
